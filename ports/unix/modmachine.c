@@ -67,6 +67,17 @@ uintptr_t mod_machine_mem_get_addr(mp_obj_t addr_o, uint align) {
     return addr;
 }
 
+// The port's own classes for the machine module: the I2C bus, and
+// the timer, the PWM and the watchdog (machine_hw_linux.c).
+#define MICROPY_PY_MACHINE_EXTRA_GLOBALS\
+    { MP_ROM_QSTR(MP_QSTR_I2C), MP_ROM_PTR(&machine_i2c_type) },\
+    { MP_ROM_QSTR(MP_QSTR_Timer), MP_ROM_PTR(&machine_timer_type) },\
+    { MP_ROM_QSTR(MP_QSTR_PWM), MP_ROM_PTR(&machine_pwm_type) },\
+    { MP_ROM_QSTR(MP_QSTR_WDT), MP_ROM_PTR(&machine_wdt_type) },\
+    { MP_ROM_QSTR(MP_QSTR_SDCard), MP_ROM_PTR(&machine_sdcard_type) },\
+    { MP_ROM_QSTR(MP_QSTR_reset), MP_ROM_PTR(&machine_reset_obj) },
+
+
 static void mp_machine_idle(void) {
     #ifdef MICROPY_UNIX_MACHINE_IDLE
     MICROPY_UNIX_MACHINE_IDLE

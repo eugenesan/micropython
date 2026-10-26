@@ -242,3 +242,12 @@ static inline unsigned long mp_random_seed_init(void) {
 #ifndef MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS
 #define MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS (MICROPY_BLUETOOTH_NIMBLE)
 #endif
+
+// The port: the firmware names the cipher modes (ucryptolib.MODE_ECB
+// and friends), so the constants have to exist.
+#ifndef MICROPY_PY_CRYPTOLIB_CONSTS
+#define MICROPY_PY_CRYPTOLIB_CONSTS (1)
+#endif
+#ifndef MICROPY_PY_CRYPTOLIB_CTR
+#define MICROPY_PY_CRYPTOLIB_CTR (1)
+#endif

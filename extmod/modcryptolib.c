@@ -365,6 +365,9 @@ static const mp_rom_map_elem_t mp_module_cryptolib_globals_table[] = {
     #if MICROPY_PY_CRYPTOLIB_CTR
     { MP_ROM_QSTR(MP_QSTR_MODE_CTR), MP_ROM_INT(UCRYPTOLIB_MODE_CTR) },
     #endif
+    // The port: the firmware names AES-GCM among the modes (the
+    // setting stores the name); MicroPython has no GCM.
+    { MP_ROM_QSTR(MP_QSTR_MODE_GCM), MP_ROM_INT(4) },
     #endif
 };
 

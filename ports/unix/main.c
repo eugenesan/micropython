@@ -441,7 +441,7 @@ int main(int argc, char **argv) {
     #endif
 
     // Define a reasonable stack limit to detect stack overflow.
-    mp_uint_t stack_size = 40000 * UNIX_STACK_MULTIPLIER;
+    mp_uint_t stack_size = 500000 * UNIX_STACK_MULTIPLIER;
 
     // We should capture stack top ASAP after start, and it should be
     // captured guaranteedly before any other stack variables are allocated.

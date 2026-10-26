@@ -213,6 +213,13 @@ SRC_C += \
 	mpbtstackport_usb.c \
 	mpnimbleport.c \
 	modtermios.c \
+	evdev_bcm.c \
+	qrcode_maixpy.c \
+	qrcodegen.c \
+	lcd_bcm.c \
+	machine_hw_linux.c \
+	nfc_bcm2079x.c \
+	machine_i2c_linux.c \
 	modsocket.c \
 	modffi.c \
 	modjni.c \
