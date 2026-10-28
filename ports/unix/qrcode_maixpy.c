@@ -39,7 +39,7 @@ static mp_obj_t qrcode_encode(mp_obj_t text_obj) {
     for (size_t i = 0; i < bufsize - 1; ++i) {
         vstr.buf[i] = qrcode[(i + 1)];
     }
-    return mp_obj_new_str_from_vstr(&vstr);
+    return mp_obj_new_bytes((const byte *)vstr.buf, vstr.len);
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(qrcode_encode_obj, qrcode_encode);
 
@@ -83,7 +83,7 @@ static mp_obj_t qrcode_encode_to_string(mp_obj_t text_obj){
         }
         vstr.buf[y*(size+1)+size]='\n';
     }
-    return mp_obj_new_str_from_vstr(&vstr);
+    return mp_obj_new_bytes((const byte *)vstr.buf, vstr.len);
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(qrcode_encode_to_string_obj, qrcode_encode_to_string);
 /****************************** MODULE ******************************/

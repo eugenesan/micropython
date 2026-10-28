@@ -213,6 +213,7 @@ SRC_C += \
 	mpbtstackport_usb.c \
 	mpnimbleport.c \
 	modtermios.c \
+	crypto_fast.c \
 	evdev_bcm.c \
 	qrcode_maixpy.c \
 	qrcodegen.c \

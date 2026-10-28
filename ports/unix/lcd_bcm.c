@@ -184,7 +184,13 @@ static void lcd_do_commit(void) {
     dc.var.xres = lcd.phys_width;
     dc.var.yres = lcd.phys_height;
 
+    /* MSMFB_DISPLAY_COMMIT is the MSM-specific commit; FBIOPAN_DISPLAY
+     * is the generic one and is what actually flips the panel on this
+     * kernel.  Try both. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
+    var.yoffset = lcd.pan_offset;
+    var.xoffset = 0;
+    ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
     lcd.dirty = 0;
 }
 
