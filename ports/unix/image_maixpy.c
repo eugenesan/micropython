@@ -111,8 +111,8 @@ static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&image_height_obj) },
     { MP_ROM_QSTR(MP_QSTR_to_bytes), MP_ROM_PTR(&image_to_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&image_clear_obj) },
-    { MP_ROM_QSTR(MP_QSTR_from_nv12), (mp_rom_obj_t)&image_from_nv12_obj },
-    { MP_ROM_QSTR(MP_QSTR_find_qrcodes), (mp_rom_obj_t)&image_find_qrcodes_obj },
+    { .key = MP_ROM_QSTR(MP_QSTR_from_nv12), .value = (mp_rom_obj_t)&image_from_nv12_obj },
+    { .key = MP_ROM_QSTR(MP_QSTR_find_qrcodes), .value = (mp_rom_obj_t)&image_find_qrcodes_obj },
     { MP_ROM_QSTR(MP_QSTR_get_statistics), (mp_rom_obj_t)&image_get_statistics_obj },
 };
 static MP_DEFINE_CONST_DICT(image_locals_dict, image_locals_dict_table);
@@ -145,7 +145,7 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics) __attribute__((used));
+static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
 
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
 static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
@@ -168,7 +168,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(stats_median_obj, stats_median);
 static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__image) },
     { MP_ROM_QSTR(MP_QSTR_Image), MP_ROM_PTR(&image_type) },
-    { MP_ROM_QSTR(MP_QSTR_from_nv12), (mp_rom_obj_t)&image_from_nv12_obj },
+    { .key = MP_ROM_QSTR(MP_QSTR_from_nv12), .value = (mp_rom_obj_t)&image_from_nv12_obj },
 };
 static MP_DEFINE_CONST_DICT(image_module_globals, image_module_globals_table);
 
