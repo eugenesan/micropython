@@ -835,7 +835,9 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         if (_dest[0] != MP_OBJ_NULL && h == 0) h = mp_obj_get_int(mp_call_method_n_kw(0, 0, _dest));
         mp_load_method_maybe(buf, MP_QSTR_to_bytes, _dest);
         if (_dest[0] != MP_OBJ_NULL) {
+            static mp_obj_t _tb_keepalive = MP_OBJ_NULL;
             mp_obj_t tb = mp_call_method_n_kw(0, 0, _dest);
+            _tb_keepalive = tb;  /* prevent GC */
             data = (uint8_t *)mp_obj_str_get_data(tb, &len);
             if (w == 0) w = (int)(len / 2) / (h > 0 ? h : 1);
             if (h == 0) h = (int)(len / 2) / (w > 0 ? w : 1);
