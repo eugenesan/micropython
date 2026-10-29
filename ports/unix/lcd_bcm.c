@@ -827,15 +827,15 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         return mp_const_none;
 
     /* Image object: get dimensions and RGB565 data via to_bytes() */
-    mp_obj_t width_fn = mp_load_method_maybe(buf, MP_QSTR_width, NULL);
-    if (width_fn != MP_OBJ_NULL) {
-        if (w == 0) w = mp_obj_get_int(mp_call_function_0(width_fn));
-        mp_obj_t height_fn = mp_load_method_maybe(buf, MP_QSTR_height, NULL);
-        if (height_fn != MP_OBJ_NULL && h == 0)
-            h = mp_obj_get_int(mp_call_function_0(height_fn));
-        mp_obj_t to_bytes_fn = mp_load_method_maybe(buf, MP_QSTR_to_bytes, NULL);
-        if (to_bytes_fn != MP_OBJ_NULL) {
-            mp_obj_t tb = mp_call_function_0(to_bytes_fn);
+    mp_obj_t _dest[2];
+    mp_load_method_maybe(buf, MP_QSTR_width, _dest);
+    if (_dest[0] != MP_OBJ_NULL) {
+        if (w == 0) w = mp_obj_get_int(mp_call_function_0(_dest[0]));
+        mp_load_method_maybe(buf, MP_QSTR_height, _dest);
+        if (_dest[0] != MP_OBJ_NULL && h == 0) h = mp_obj_get_int(mp_call_function_0(_dest[0]));
+        mp_load_method_maybe(buf, MP_QSTR_to_bytes, _dest);
+        if (_dest[0] != MP_OBJ_NULL) {
+            mp_obj_t tb = mp_call_function_0(_dest[0]);
             data = (uint8_t *)mp_obj_str_get_data(tb, &len);
             if (w == 0) w = (int)(len / 2) / (h > 0 ? h : 1);
             if (h == 0) h = (int)(len / 2) / (w > 0 ? w : 1);
