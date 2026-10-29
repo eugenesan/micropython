@@ -51,7 +51,7 @@ static mp_obj_t image_clear(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(image_clear_obj, image_clear);
 
-static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
+static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     if (n_args < 7) return mp_const_none;
     mp_buffer_info_t bufinfo;
     mp_get_buffer_raise(args[0], &bufinfo, MP_BUFFER_READ);
@@ -83,7 +83,7 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) __attribute
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_from_nv12_obj, 7, image_from_nv12);
 
-static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
+static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
     return mp_obj_new_list(0, NULL);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 0, image_find_qrcodes);
@@ -92,38 +92,6 @@ typedef struct {
     mp_obj_base_t base;
     int l_mean, l_stdev, a_mean, a_stdev, b_mean, b_stdev;
 } stats_obj_t;
-
-static mp_obj_t image_get_statistics(mp_obj_t self_in) {
-    image_obj_t *o = MP_OBJ_TO_PTR(self_in);
-    stats_obj_t *s = m_new_obj(stats_obj_t);
-    s->base.type = &stats_type;
-    long sum = 0;
-    for (int i = 0; i < o->w * o->h; i++) {
-        sum += o->buf[i * 2 + 1] >> 3;
-    }
-    s->l_mean = sum / (o->w * o->h);
-    s->l_stdev = 10;
-    s->a_mean = 128; s->a_stdev = 10;
-    s->b_mean = 128; s->b_stdev = 10;
-    return MP_OBJ_FROM_PTR(s);
-}
-static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
-
-static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
-static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
-static mp_obj_t stats_a_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_mean); }
-static mp_obj_t stats_a_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_stdev); }
-static mp_obj_t stats_b_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_mean); }
-static mp_obj_t stats_b_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_stdev); }
-static mp_obj_t stats_median(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
-
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_stdev_obj, stats_l_stdev);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_mean_obj, stats_a_mean);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_stdev_obj, stats_a_stdev);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_mean_obj, stats_b_mean);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_stdev_obj, stats_b_stdev);
-static MP_DEFINE_CONST_FUN_OBJ_1(stats_median_obj, stats_median);
 
 static const mp_rom_map_elem_t stats_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_l_mean), MP_ROM_PTR(&stats_l_mean_obj) },
@@ -161,6 +129,39 @@ MP_DEFINE_CONST_OBJ_TYPE(
     0,
     locals_dict, &stats_locals_dict
 );
+static mp_obj_t image_get_statistics(mp_obj_t self_in) {
+    image_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    stats_obj_t *s = m_new_obj(stats_obj_t);
+    s->base.type = &stats_type;
+    long sum = 0;
+    for (int i = 0; i < o->w * o->h; i++) {
+        sum += o->buf[i * 2 + 1] >> 3;
+    }
+    s->l_mean = sum / (o->w * o->h);
+    s->l_stdev = 10;
+    s->a_mean = 128; s->a_stdev = 10;
+    s->b_mean = 128; s->b_stdev = 10;
+    return MP_OBJ_FROM_PTR(s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
+
+static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
+static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
+static mp_obj_t stats_a_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_mean); }
+static mp_obj_t stats_a_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_stdev); }
+static mp_obj_t stats_b_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_mean); }
+static mp_obj_t stats_b_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_stdev); }
+static mp_obj_t stats_median(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
+
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_stdev_obj, stats_l_stdev);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_mean_obj, stats_a_mean);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_stdev_obj, stats_a_stdev);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_mean_obj, stats_b_mean);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_stdev_obj, stats_b_stdev);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_median_obj, stats_median);
+
+
 
 static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__image) },
