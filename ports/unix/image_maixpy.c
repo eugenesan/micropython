@@ -1,3 +1,5 @@
+#pragma GCC diagnostic ignored "-Wunused-const-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
