@@ -830,12 +830,12 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     mp_obj_t _dest[2];
     mp_load_method_maybe(buf, MP_QSTR_width, _dest);
     if (_dest[0] != MP_OBJ_NULL) {
-        if (w == 0) w = mp_obj_get_int(mp_call_function_0(_dest[0]));
+        if (w == 0) w = mp_obj_get_int(mp_call_method_n_kw(0, 0, _dest));
         mp_load_method_maybe(buf, MP_QSTR_height, _dest);
-        if (_dest[0] != MP_OBJ_NULL && h == 0) h = mp_obj_get_int(mp_call_function_0(_dest[0]));
+        if (_dest[0] != MP_OBJ_NULL && h == 0) h = mp_obj_get_int(mp_call_method_n_kw(0, 0, _dest));
         mp_load_method_maybe(buf, MP_QSTR_to_bytes, _dest);
         if (_dest[0] != MP_OBJ_NULL) {
-            mp_obj_t tb = mp_call_function_0(_dest[0]);
+            mp_obj_t tb = mp_call_method_n_kw(0, 0, _dest);
             data = (uint8_t *)mp_obj_str_get_data(tb, &len);
             if (w == 0) w = (int)(len / 2) / (h > 0 ? h : 1);
             if (h == 0) h = (int)(len / 2) / (w > 0 ? w : 1);
