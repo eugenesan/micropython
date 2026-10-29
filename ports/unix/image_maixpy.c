@@ -141,9 +141,9 @@ static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&image_height_obj) },
     { MP_ROM_QSTR(MP_QSTR_to_bytes), MP_ROM_PTR(&image_to_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&image_clear_obj) },
-    { MP_ROM_QSTR(MP_QSTR_from_nv12), MP_ROM_PTR(&image_from_nv12_obj) },
-    { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_from_nv12), (mp_rom_obj_t)&image_from_nv12_obj },
+    { MP_ROM_QSTR(MP_QSTR_find_qrcodes), (mp_rom_obj_t)&image_find_qrcodes_obj },
+    { MP_ROM_QSTR(MP_QSTR_get_statistics), (mp_rom_obj_t)&image_get_statistics_obj },
 };
 static MP_DEFINE_CONST_DICT(image_locals_dict, image_locals_dict_table);
 
@@ -165,7 +165,7 @@ MP_DEFINE_CONST_OBJ_TYPE(
 static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__image) },
     { MP_ROM_QSTR(MP_QSTR_Image), MP_ROM_PTR(&image_type) },
-    { MP_ROM_QSTR(MP_QSTR_from_nv12), MP_ROM_PTR(&image_from_nv12_obj) },
+    { MP_ROM_QSTR(MP_QSTR_from_nv12), (mp_rom_obj_t)&image_from_nv12_obj },
 };
 static MP_DEFINE_CONST_DICT(image_module_globals, image_module_globals_table);
 
