@@ -826,22 +826,50 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     if (buf == mp_const_none)
         return mp_const_none;
 
-    if (mp_obj_is_type(buf, &mp_type_bytes)) {
+    /* Image object: get dimensions and RGB565 data via to_bytes() */
+    mp_obj_t width_fn = mp_load_method_maybe(buf, MP_QSTR_width, NULL);
+    if (width_fn != MP_OBJ_NULL) {
+        if (w == 0) w = mp_obj_get_int(mp_call_function_0(width_fn));
+        mp_obj_t height_fn = mp_load_method_maybe(buf, MP_QSTR_height, NULL);
+        if (height_fn != MP_OBJ_NULL && h == 0)
+            h = mp_obj_get_int(mp_call_function_0(height_fn));
+        mp_obj_t to_bytes_fn = mp_load_method_maybe(buf, MP_QSTR_to_bytes, NULL);
+        if (to_bytes_fn != MP_OBJ_NULL) {
+            mp_obj_t tb = mp_call_function_0(to_bytes_fn);
+            data = (uint8_t *)mp_obj_str_get_data(tb, &len);
+            if (w == 0) w = (int)(len / 2) / (h > 0 ? h : 1);
+            if (h == 0) h = (int)(len / 2) / (w > 0 ? w : 1);
+        }
+    } else if (mp_obj_is_type(buf, &mp_type_bytes)) {
         data = (uint8_t *)mp_obj_str_get_data(buf, &len);
-        if (w == 0)
-            w = (int)(len / 4);
-        if (h == 0)
-            h = 1;
+        if (w == 0) w = (int)(len / 4);
+        if (h == 0) h = 1;
     } else {
         data = (uint8_t *)mp_obj_get_int(buf);
         len = (size_t)w * h * 4;
     }
 
+    /* determine if data is 16-bit (RGB565) or 32-bit */
+    int is16 = (len == (size_t)w * h * 2);
     for (i = 0; i < (size_t)w * (size_t)h; i++) {
-        uint32_t pixel = (uint32_t)data[i * 4] |
-            ((uint32_t)data[i * 4 + 1] << 8) |
-            ((uint32_t)data[i * 4 + 2] << 16) |
-            ((uint32_t)data[i * 4 + 3] << 24);
+        uint32_t pixel;
+        if (is16) {
+            unsigned short rgb = data[i * 2] | (data[i * 2 + 1] << 8);
+            int r = (rgb >> 11) & 0x1f;
+            int g = (rgb >> 5) & 0x3f;
+            int b = rgb & 0x1f;
+            pixel = (r << 19) | (g << 10) | (b << 3); /* approximate 32-bit */
+            /* actually need proper 8-bit expansion */
+            r = (r << 3) | (r >> 2);
+            g = (g << 2) | (g >> 4);
+            b = (b << 3) | (b >> 2);
+            pixel = (r) | (g << 8) | (b << 16) | (0xff << 24);
+        } else {
+            pixel = (uint32_t)data[i * 4] |
+                ((uint32_t)data[i * 4 + 1] << 8) |
+                ((uint32_t)data[i * 4 + 2] << 16) |
+                ((uint32_t)data[i * 4 + 3] << 24);
+        }
         int x = (int)i % w, y = (int)i / w;
 
         if (rw > 0 && rh > 0) {
