@@ -143,7 +143,7 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
+static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics) __attribute__((used));
 
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
 static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
