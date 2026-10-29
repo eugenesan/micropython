@@ -18,6 +18,7 @@ typedef struct {
 
 /* forward declarations */
 const mp_obj_type_t stats_type;
+const mp_obj_type_t image_type;
 static mp_obj_t image_get_statistics(mp_obj_t self_in);
 
 static mp_obj_t image_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
