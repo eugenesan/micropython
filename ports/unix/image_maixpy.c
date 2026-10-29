@@ -51,7 +51,7 @@ static mp_obj_t image_clear(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(image_clear_obj, image_clear);
 
-static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
     if (n_args < 7) return mp_const_none;
     mp_buffer_info_t bufinfo;
     mp_get_buffer_raise(args[0], &bufinfo, MP_BUFFER_READ);
@@ -83,7 +83,7 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_VAR_ARGS_OBJ(image_from_nv12_obj, 7, image_from_nv12);
 
-static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
     return mp_obj_new_list(0, NULL);
 }
 static MP_DEFINE_VAR_ARGS_OBJ(image_find_qrcodes_obj, 0, image_find_qrcodes);
