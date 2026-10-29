@@ -215,6 +215,7 @@ SRC_C += \
 	modtermios.c \
 	crypto_fast.c \
 	evdev_bcm.c \
+	image_maixpy.c \
 	qrcode_maixpy.c \
 	qrcodegen.c \
 	lcd_bcm.c \
