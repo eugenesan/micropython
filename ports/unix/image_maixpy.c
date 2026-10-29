@@ -216,7 +216,6 @@ static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
     return mp_obj_new_list(n, items);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 1, image_find_qrcodes);
-static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 0, image_find_qrcodes);
 
 static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     image_obj_t *o = MP_OBJ_TO_PTR(self_in);
