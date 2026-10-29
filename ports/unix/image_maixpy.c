@@ -57,7 +57,7 @@ static mp_obj_t image_clear(mp_obj_t self_in) {
 static MP_DEFINE_CONST_FUN_OBJ_1(image_clear_obj, image_clear);
 
 /* from_nv12: store Y as grayscale in buf (Y in high byte, Y in low byte for RGB565 gray) */
-static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
     /* args: data(bytes), src_w, src_h, stride_y, stride_uv, dst_w, dst_h, gray, ... */
     if (n_args < 7) return mp_const_none;
     mp_buffer_info_t bufinfo;
@@ -98,7 +98,7 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
 static MP_DEFINE_VAR_ARGS_OBJ(image_from_nv12_obj, 7, image_from_nv12);
 
 /* find_qrcodes stub */
-static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
     return mp_obj_new_list(0, NULL);
 }
 static MP_DEFINE_VAR_ARGS_OBJ(image_find_qrcodes_obj, 0, image_find_qrcodes);
@@ -131,9 +131,6 @@ static mp_obj_t stats_a_stdev(mp_obj_t self_in) { return mp_obj_new_int(10); }
 static mp_obj_t stats_b_mean(mp_obj_t self_in) { return mp_obj_new_int(128); }
 static mp_obj_t stats_b_stdev(mp_obj_t self_in) { return mp_obj_new_int(10); }
 
-static const mp_rom_map_elem_t stats_locals_dict_table[] = {
-    { MP_ROM_QSTR(MP_QSTR_l_mean), MP_ROM_PTR(&stats_l_mean) },  /* placeholder - need property */
-};
 /* Use simple methods instead */
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_stdev_obj, stats_l_stdev);
@@ -152,7 +149,7 @@ static const mp_rom_map_elem_t stats_locals_dict_table2[] = {
 };
 static MP_DEFINE_CONST_DICT(stats_locals_dict, stats_locals_dict_table2);
 
-static const mp_obj_type_t stats_type = {
+static const mp_obj_type_t stats_type __attribute__((used)) = {
     { &mp_type_type },
     .name = MP_QSTR_statistics,
     .locals_dict = (mp_obj_dict_t *)&stats_locals_dict,
