@@ -784,8 +784,8 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     mp_obj_t buf = mp_const_none;
     size_t i;
     int w = 0, h = 0, ox = 0, oy = 0, rx = 0, ry = 0, rw = 0, rh = 0;
-    uint8_t *data;
-    size_t len;
+    uint8_t *data = NULL;
+    size_t len = 0;
 
     if (n_args > 0)
         buf = args[0];
