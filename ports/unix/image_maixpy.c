@@ -81,12 +81,12 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) __attribute
     }
     return MP_OBJ_FROM_PTR(o);
 }
-static MP_DEFINE_VAR_ARGS_OBJ(image_from_nv12_obj, 7, image_from_nv12);
+static MP_DEFINE_CONST_FUN_OBJ_VAR(image_from_nv12_obj, 7, image_from_nv12);
 
 static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) __attribute__((used)) {
     return mp_obj_new_list(0, NULL);
 }
-static MP_DEFINE_VAR_ARGS_OBJ(image_find_qrcodes_obj, 0, image_find_qrcodes);
+static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 0, image_find_qrcodes);
 
 typedef struct {
     mp_obj_base_t base;
