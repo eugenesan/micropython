@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "py/runtime.h"
 #include "py/obj.h"
@@ -226,7 +227,13 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
         sum += o->buf[i * 2 + 1] >> 3;
     }
     s->l_mean = sum / (o->w * o->h);
-    s->l_stdev = 10;
+    /* compute stdev */
+    long sq = 0;
+    for (int i = 0; i < o->w * o->h; i++) {
+        int v = (o->buf[i * 2 + 1] >> 3) - s->l_mean;
+        sq += v * v;
+    }
+    s->l_stdev = (int)sqrt(sq / (o->w * o->h));
     s->a_mean = 128; s->a_stdev = 10;
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
