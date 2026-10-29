@@ -4,6 +4,7 @@
 
 #include "py/runtime.h"
 #include "py/obj.h"
+#include "k_quirc.h"
 
 typedef struct {
     mp_obj_base_t base;
@@ -93,9 +94,128 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_from_nv12_obj, 7, image_from_nv12);
 
-static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
-    return mp_obj_new_list(0, NULL);
+/* QR result object */
+typedef struct {
+    mp_obj_base_t base;
+    k_quirc_result_t res;
+} qr_obj_t;
+
+static mp_obj_t qr_payload(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_str((const char *)o->res.data.payload, o->res.data.payload_len);
 }
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_payload_obj, qr_payload);
+
+static mp_obj_t qr_x(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_int(o->res.corners[0].x);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_x_obj, qr_x);
+
+static mp_obj_t qr_y(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_int(o->res.corners[0].y);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_y_obj, qr_y);
+
+static mp_obj_t qr_w(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    /* bounding box width */
+    int minx = o->res.corners[0].x, maxx = o->res.corners[0].x;
+    for (int i = 1; i < 4; i++) {
+        if (o->res.corners[i].x < minx) minx = o->res.corners[i].x;
+        if (o->res.corners[i].x > maxx) maxx = o->res.corners[i].x;
+    }
+    return mp_obj_new_int(maxx - minx);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_w_obj, qr_w);
+
+static mp_obj_t qr_h(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    int miny = o->res.corners[0].y, maxy = o->res.corners[0].y;
+    for (int i = 1; i < 4; i++) {
+        if (o->res.corners[i].y < miny) miny = o->res.corners[i].y;
+        if (o->res.corners[i].y > maxy) maxy = o->res.corners[i].y;
+    }
+    return mp_obj_new_int(maxy - miny);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_h_obj, qr_h);
+
+static mp_obj_t qr_corners(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    mp_obj_t items[4];
+    for (int i = 0; i < 4; i++) {
+        mp_obj_t pt[2] = { mp_obj_new_int(o->res.corners[i].x), mp_obj_new_int(o->res.corners[i].y) };
+        items[i] = mp_obj_new_tuple(2, pt);
+    }
+    return mp_obj_new_list(4, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_corners_obj, qr_corners);
+
+static mp_obj_t qr_rect(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    int minx = o->res.corners[0].x, miny = o->res.corners[0].y;
+    int maxx = minx, maxy = miny;
+    for (int i = 1; i < 4; i++) {
+        if (o->res.corners[i].x < minx) minx = o->res.corners[i].x;
+        if (o->res.corners[i].x > maxx) maxx = o->res.corners[i].x;
+        if (o->res.corners[i].y < miny) miny = o->res.corners[i].y;
+        if (o->res.corners[i].y > maxy) maxy = o->res.corners[i].y;
+    }
+    mp_obj_t rect[4] = { mp_obj_new_int(minx), mp_obj_new_int(miny), mp_obj_new_int(maxx-minx), mp_obj_new_int(maxy-miny) };
+    return mp_obj_new_tuple(4, rect);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_rect_obj, qr_rect);
+
+static const mp_rom_map_elem_t qr_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_payload), MP_ROM_PTR(&qr_payload_obj) },
+    { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&qr_x_obj) },
+    { MP_ROM_QSTR(MP_QSTR_y), MP_ROM_PTR(&qr_y_obj) },
+    { MP_ROM_QSTR(MP_QSTR_w), MP_ROM_PTR(&qr_w_obj) },
+    { MP_ROM_QSTR(MP_QSTR_h), MP_ROM_PTR(&qr_h_obj) },
+    { MP_ROM_QSTR(MP_QSTR_corners), MP_ROM_PTR(&qr_corners_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&qr_rect_obj) },
+};
+static MP_DEFINE_CONST_DICT(qr_locals_dict, qr_locals_dict_table);
+
+MP_DEFINE_CONST_OBJ_TYPE(
+    qr_type,
+    MP_QSTR_qrcode,
+    0,
+    locals_dict, &qr_locals_dict
+);
+
+static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
+    /* args: self, find_inverted (optional) */
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    bool find_inverted = false;
+    if (n_args >= 2) find_inverted = mp_obj_get_int(args[1]);
+
+    /* convert RGB565 to grayscale */
+    int npix = o->w * o->h;
+    uint8_t *gray = malloc(npix);
+    for (int i = 0; i < npix; i++) {
+        unsigned short rgb = o->buf[i*2] | (o->buf[i*2+1] << 8);
+        int r = (rgb >> 11) & 0x1f;
+        int g = (rgb >> 5) & 0x3f;
+        int b = rgb & 0x1f;
+        gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+    }
+
+    k_quirc_result_t results[8];
+    int n = k_quirc_decode_grayscale(gray, o->w, o->h, results, 8, find_inverted);
+    free(gray);
+
+    mp_obj_t items[n > 0 ? n : 0];
+    for (int i = 0; i < n; i++) {
+        qr_obj_t *qo = m_new_obj(qr_obj_t);
+        qo->base.type = &qr_type;
+        qo->res = results[i];
+        items[i] = MP_OBJ_FROM_PTR(qo);
+    }
+    return mp_obj_new_list(n, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 1, image_find_qrcodes);
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 0, image_find_qrcodes);
 
 static mp_obj_t image_get_statistics(mp_obj_t self_in) {
