@@ -267,12 +267,19 @@ static const mp_rom_map_elem_t stats_locals_dict_table[] = {
 };
 static MP_DEFINE_CONST_DICT(stats_locals_dict, stats_locals_dict_table);
 
+static mp_obj_t image_find_qrcodes_method(size_t n_args, const mp_obj_t *args) {
+    mp_obj_t a[2] = { args[0], (n_args >= 2) ? args[1] : mp_obj_new_bool(false) };
+    return image_find_qrcodes(2, a);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_find_qrcodes_method_obj, 1, 2, image_find_qrcodes_method);
+
 static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_width), MP_ROM_PTR(&image_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&image_height_obj) },
     { MP_ROM_QSTR(MP_QSTR_to_bytes), MP_ROM_PTR(&image_to_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&image_clear_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_method_obj) },
 };
 static MP_DEFINE_CONST_DICT(image_locals_dict, image_locals_dict_table);
 
