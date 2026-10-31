@@ -16,6 +16,7 @@ typedef struct {
 typedef struct {
     mp_obj_base_t base;
     int l_mean, l_stdev, a_mean, a_stdev, b_mean, b_stdev;
+    int l_min, l_max, clipped_low, clipped_high;
 } stats_obj_t;
 
 /* forward declarations */
@@ -34,7 +35,8 @@ static mp_obj_t image_make_new(const mp_obj_type_t *type, size_t n_args, size_t 
             o->h = mp_obj_get_int(t->items[1]);
         }
     }
-    o->buf = calloc(o->w * o->h * 2, 1);
+    o->buf = m_new(uint8_t, o->w * o->h * 2);
+    memset(o->buf, 0, o->w * o->h * 2);
     return MP_OBJ_FROM_PTR(o);
 }
 
@@ -75,7 +77,8 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     image_obj_t *o = m_new_obj(image_obj_t);
     o->base.type = &image_type;
     o->w = dst_w; o->h = dst_h;
-    o->buf = calloc(dst_w * dst_h * 2, 1);
+    o->buf = m_new(uint8_t, dst_w * dst_h * 2);
+    memset(o->buf, 0, dst_w * dst_h * 2);
 
     const unsigned char *src = (const unsigned char *)bufinfo.buf;
     int sx_ratio = src_w / dst_w; if (sx_ratio < 1) sx_ratio = 1;
@@ -93,7 +96,7 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     }
     return MP_OBJ_FROM_PTR(o);
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR(image_from_nv12_obj, 7, image_from_nv12);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_from_nv12_obj, 7, 8, image_from_nv12);
 
 /* QR result object */
 typedef struct {
@@ -222,18 +225,44 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     image_obj_t *o = MP_OBJ_TO_PTR(self_in);
     stats_obj_t *s = m_new_obj(stats_obj_t);
     s->base.type = &stats_type;
+    int n = o->w * o->h;
     long sum = 0;
-    for (int i = 0; i < o->w * o->h; i++) {
-        sum += o->buf[i * 2 + 1] >> 3;
+    double sq = 0;
+    int lmin = 255, lmax = 0, clip_low = 0, clip_high = 0;
+
+    for (int i = 0; i < n; i++) {
+        unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
+        int r5 = (rgb >> 11) & 0x1f;
+        int g6 = (rgb >> 5) & 0x3f;
+        int b5 = rgb & 0x1f;
+        int r = (r5 << 3) | (r5 >> 2);
+        int g = (g6 << 2) | (g6 >> 4);
+        int b = (b5 << 3) | (b5 >> 2);
+        int l = (r * 299 + g * 587 + b * 114) / 1000;
+        sum += l;
+        if (l < lmin) lmin = l;
+        if (l > lmax) lmax = l;
+        if (l <= 2) clip_low++;
+        if (l >= 253) clip_high++;
     }
-    s->l_mean = sum / (o->w * o->h);
-    /* compute stdev */
-    long sq = 0;
-    for (int i = 0; i < o->w * o->h; i++) {
-        int v = (o->buf[i * 2 + 1] >> 3) - s->l_mean;
-        sq += v * v;
+    s->l_mean = sum / n;
+    for (int i = 0; i < n; i++) {
+        unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
+        int r5 = (rgb >> 11) & 0x1f;
+        int g6 = (rgb >> 5) & 0x3f;
+        int b5 = rgb & 0x1f;
+        int r = (r5 << 3) | (r5 >> 2);
+        int g = (g6 << 2) | (g6 >> 4);
+        int b = (b5 << 3) | (b5 >> 2);
+        int l = (r * 299 + g * 587 + b * 114) / 1000;
+        double d = l - s->l_mean;
+        sq += d * d;
     }
-    s->l_stdev = (int)sqrt(sq / (o->w * o->h));
+    s->l_stdev = (int)sqrt(sq / n);
+    s->l_min = lmin;
+    s->l_max = lmax;
+    s->clipped_low = clip_low;
+    s->clipped_high = clip_high;
     s->a_mean = 128; s->a_stdev = 10;
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
@@ -247,6 +276,10 @@ static mp_obj_t stats_a_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR
 static mp_obj_t stats_b_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_mean); }
 static mp_obj_t stats_b_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->b_stdev); }
 static mp_obj_t stats_median(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
+static mp_obj_t stats_l_min(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_min); }
+static mp_obj_t stats_l_max(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_max); }
+static mp_obj_t stats_clipped_low(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->clipped_low); }
+static mp_obj_t stats_clipped_high(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->clipped_high); }
 
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_stdev_obj, stats_l_stdev);
@@ -255,10 +288,18 @@ static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_stdev_obj, stats_a_stdev);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_mean_obj, stats_b_mean);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_b_stdev_obj, stats_b_stdev);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_median_obj, stats_median);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_min_obj, stats_l_min);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_max_obj, stats_l_max);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_clipped_low_obj, stats_clipped_low);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_clipped_high_obj, stats_clipped_high);
 
 static const mp_rom_map_elem_t stats_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_l_mean), MP_ROM_PTR(&stats_l_mean_obj) },
     { MP_ROM_QSTR(MP_QSTR_l_stdev), MP_ROM_PTR(&stats_l_stdev_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_min), MP_ROM_PTR(&stats_l_min_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_max), MP_ROM_PTR(&stats_l_max_obj) },
+    { MP_ROM_QSTR(MP_QSTR_clipped_low), MP_ROM_PTR(&stats_clipped_low_obj) },
+    { MP_ROM_QSTR(MP_QSTR_clipped_high), MP_ROM_PTR(&stats_clipped_high_obj) },
     { MP_ROM_QSTR(MP_QSTR_a_mean), MP_ROM_PTR(&stats_a_mean_obj) },
     { MP_ROM_QSTR(MP_QSTR_a_stdev), MP_ROM_PTR(&stats_a_stdev_obj) },
     { MP_ROM_QSTR(MP_QSTR_b_mean), MP_ROM_PTR(&stats_b_mean_obj) },

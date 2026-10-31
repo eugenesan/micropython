@@ -216,6 +216,7 @@ SRC_C += \
 	crypto_fast.c \
 	evdev_bcm.c \
 	image_maixpy.c \
+	shannon.c \
 	k_quirc.c \
 	k_quirc_decode.c \
 	k_quirc_identify.c \
