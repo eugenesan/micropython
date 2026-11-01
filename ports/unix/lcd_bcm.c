@@ -913,6 +913,13 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         len = (size_t)w * h * 4;
     }
 
+    /* Mark the frame as in progress.  Otherwise the commit thread can
+     * see the dirty flag left by the previous frame and commit this
+     * one while it is still being drawn, which shows up as a partial
+     * image (often a narrow vertical strip). */
+    lcd.dirty = 0;
+    lcd.draw_count++;
+
     /* determine if data is 16-bit (RGB565) or 32-bit */
     int is16 = (len == (size_t)w * h * 2);
     for (i = 0; i < (size_t)w * (size_t)h; i++) {
