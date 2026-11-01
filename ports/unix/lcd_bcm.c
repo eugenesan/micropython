@@ -117,7 +117,11 @@ struct lcd_state {
     int phys_height;
     int stride;
     int bpp;
-    int pan_offset;          /* the buffer the panel shows, in rows */
+    int pan_offset;          /* the buffer being drawn into, in rows */
+    int visible_offset;      /* the buffer the panel is showing, in rows */
+    int last_pan_offset;     /* last yoffset sent to FBIOPAN_DISPLAY */
+    int nbufs;               /* buffers in the framebuffer's virtual area */
+    int preview;             /* double-buffered camera preview is active */
     int r_off, g_off, b_off, a_off;
     int r_len, g_len, b_len, a_len;
     int rotation;             /* 0..3 */
@@ -177,7 +181,7 @@ static void lcd_do_commit(void) {
 
     memset(&dc, 0, sizeof(dc));
     dc.flags = 0;
-    dc.wait_for_finish = 1;
+    dc.wait_for_finish = 0;
     dc.var = var;
     dc.var.xoffset = 0;
     dc.var.yoffset = lcd.pan_offset;
@@ -188,9 +192,12 @@ static void lcd_do_commit(void) {
      * is the generic one and is what actually flips the panel on this
      * kernel.  Try both. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
-    var.yoffset = lcd.pan_offset;
-    var.xoffset = 0;
-    ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
+    if (lcd.pan_offset != lcd.last_pan_offset) {
+        var.yoffset = lcd.pan_offset;
+        var.xoffset = 0;
+        ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
+        lcd.last_pan_offset = lcd.pan_offset;
+    }
     lcd.dirty = 0;
 }
 
@@ -512,7 +519,13 @@ static mp_obj_t lcd_init(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
     lcd.rotation = 0;
     lcd.mirror = 0;
     lcd.bgr = 0;
+    lcd.nbufs = (var.yres > 0) ? (int)(var.yres_virtual / var.yres) : 1;
+    if (lcd.nbufs < 1)
+        lcd.nbufs = 1;
     lcd.pan_offset = 0;
+    lcd.visible_offset = 0;
+    lcd.last_pan_offset = 0;
+    lcd.preview = 0;
     lcd.ready = 1;
     /* the thread that keeps the panel in step with the framebuffer */
     {
@@ -537,6 +550,8 @@ static mp_obj_t lcd_init(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
              * panel to it, so that what is drawn is what is
              * shown. */
             lcd.pan_offset = pan.yoffset;
+            lcd.visible_offset = lcd.pan_offset;
+            lcd.last_pan_offset = lcd.pan_offset;
             pan.yoffset = lcd.pan_offset;
             pan.xoffset = 0;
             ioctl(lcd.fd, FBIOPAN_DISPLAY, &pan);
@@ -573,6 +588,40 @@ static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
     if (lcd.dirty) {
         lcd_do_commit();
     }
+    return mp_const_none;
+}
+
+/* Camera preview double buffering.
+ *
+ * Drawing the 320x240 frame into the same plane the panel is scanning
+ * tears: the panel can read the old half of a row and the new half,
+ * which shows up as a horizontal sliding seam.  The framebuffer has
+ * three planes, so the preview draws into the plane that is not
+ * visible, then flips the panel to it.  The next frame draws into the
+ * old front plane, now hidden.
+ */
+static mp_obj_t lcd_preview_start(void) {
+    if (!lcd.ready)
+        return mp_const_none;
+    lcd.preview = 1;
+    lcd.pan_offset = lcd.visible_offset;
+    lcd.dirty = 0;
+    return mp_const_none;
+}
+
+static mp_obj_t lcd_preview_flip(void) {
+    if (!lcd.ready || !lcd.preview)
+        return mp_const_none;
+    lcd.dirty = 0;
+    return mp_const_none;
+}
+
+static mp_obj_t lcd_preview_stop(void) {
+    if (!lcd.ready)
+        return mp_const_none;
+    lcd.preview = 0;
+    lcd.pan_offset = lcd.visible_offset;
+    lcd.dirty = 1;
     return mp_const_none;
 }
 
@@ -784,6 +833,7 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     mp_obj_t buf = mp_const_none;
     size_t i;
     int w = 0, h = 0, ox = 0, oy = 0, rx = 0, ry = 0, rw = 0, rh = 0;
+    int scale = 1, flip_x = 0, flip_y = 0;
     uint8_t *data = NULL;
     size_t len = 0;
 
@@ -822,6 +872,17 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_h), MP_MAP_LOOKUP);
         if (elem != NULL)
             h = mp_obj_get_int(elem->value);
+        elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_scale), MP_MAP_LOOKUP);
+        if (elem != NULL) {
+            scale = mp_obj_get_int(elem->value);
+            if (scale < 1) scale = 1;
+        }
+        elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_flip_x), MP_MAP_LOOKUP);
+        if (elem != NULL)
+            flip_x = mp_obj_get_int(elem->value) ? 1 : 0;
+        elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_flip_y), MP_MAP_LOOKUP);
+        if (elem != NULL)
+            flip_y = mp_obj_get_int(elem->value) ? 1 : 0;
     }
     if (buf == mp_const_none)
         return mp_const_none;
@@ -856,30 +917,36 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     int is16 = (len == (size_t)w * h * 2);
     for (i = 0; i < (size_t)w * (size_t)h; i++) {
         uint32_t pixel;
-        if (is16) {
-            unsigned short rgb = data[i * 2] | (data[i * 2 + 1] << 8);
-            int r = (rgb >> 11) & 0x1f;
-            int g = (rgb >> 5) & 0x3f;
-            int b = rgb & 0x1f;
-            pixel = (r << 19) | (g << 10) | (b << 3); /* approximate 32-bit */
-            /* actually need proper 8-bit expansion */
-            r = (r << 3) | (r >> 2);
-            g = (g << 2) | (g >> 4);
-            b = (b << 3) | (b >> 2);
-            pixel = (r) | (g << 8) | (b << 16) | (0xff << 24);
-        } else {
-            pixel = (uint32_t)data[i * 4] |
-                ((uint32_t)data[i * 4 + 1] << 8) |
-                ((uint32_t)data[i * 4 + 2] << 16) |
-                ((uint32_t)data[i * 4 + 3] << 24);
-        }
         int x = (int)i % w, y = (int)i / w;
+        int sx = flip_x ? (w - 1 - x) : x;
+        int sy = flip_y ? (h - 1 - y) : y;
+        size_t si = (size_t)sy * w + sx;
 
         if (rw > 0 && rh > 0) {
             if (x < rx || y < ry || x >= rx + rw || y >= ry + rh)
                 continue;
         }
-        lcd_set_pixel(ox + x, oy + y, pixel);
+        if (is16) {
+            unsigned short rgb = data[si * 2] | (data[si * 2 + 1] << 8);
+            int r = (rgb >> 11) & 0x1f;
+            int g = (rgb >> 5) & 0x3f;
+            int b = rgb & 0x1f;
+            r = (r << 3) | (r >> 2);
+            g = (g << 2) | (g >> 4);
+            b = (b << 3) | (b >> 2);
+            pixel = (r) | (g << 8) | (b << 16) | (0xff << 24);
+        } else {
+            pixel = (uint32_t)data[si * 4] |
+                ((uint32_t)data[si * 4 + 1] << 8) |
+                ((uint32_t)data[si * 4 + 2] << 16) |
+                ((uint32_t)data[si * 4 + 3] << 24);
+        }
+        if (scale == 1) {
+            lcd_set_pixel(ox + x, oy + y, pixel);
+        } else {
+            lcd_fill_rect(ox + x * scale, oy + y * scale,
+                          scale, scale, pixel);
+        }
     }
     lcd_commit();
     return mp_const_none;
@@ -1088,6 +1155,9 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lcd_draw_qr_code_binary_obj, 4, 7, lc
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_get_pixel_obj, 2, lcd_get_pixel);
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_save_ppm_obj, 1, lcd_save_ppm);
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_flush_obj, 0, lcd_flush);
+static MP_DEFINE_CONST_FUN_OBJ_0(lcd_preview_start_obj, lcd_preview_start);
+static MP_DEFINE_CONST_FUN_OBJ_0(lcd_preview_flip_obj, lcd_preview_flip);
+static MP_DEFINE_CONST_FUN_OBJ_0(lcd_preview_stop_obj, lcd_preview_stop);
 
 static const mp_rom_map_elem_t lcd_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&lcd_init_obj) },
@@ -1109,6 +1179,9 @@ static const mp_rom_map_elem_t lcd_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_get_pixel), MP_ROM_PTR(&lcd_get_pixel_obj) },
     { MP_ROM_QSTR(MP_QSTR_save_ppm), MP_ROM_PTR(&lcd_save_ppm_obj) },
     { MP_ROM_QSTR(MP_QSTR_flush), MP_ROM_PTR(&lcd_flush_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview_start), MP_ROM_PTR(&lcd_preview_start_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview_flip), MP_ROM_PTR(&lcd_preview_flip_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview_stop), MP_ROM_PTR(&lcd_preview_stop_obj) },
     { MP_ROM_QSTR(MP_QSTR_BLACK), MP_ROM_INT(LCD_BLACK) },
     { MP_ROM_QSTR(MP_QSTR_WHITE), MP_ROM_INT(LCD_WHITE) },
     { MP_ROM_QSTR(MP_QSTR_RED), MP_ROM_INT(LCD_RED) },
