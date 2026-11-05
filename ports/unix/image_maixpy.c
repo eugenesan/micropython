@@ -274,6 +274,77 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
 
+static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
+    (void)n_args;
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    int x0 = mp_obj_get_int(args[1]);
+    int y0 = mp_obj_get_int(args[2]);
+    int w = mp_obj_get_int(args[3]);
+    int h = mp_obj_get_int(args[4]);
+    int x1 = x0 + w, y1 = y0 + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > o->w) x1 = o->w;
+    if (y1 > o->h) y1 = o->h;
+    long n = (x1 - x0) * (y1 - y0);
+
+    stats_obj_t *s = m_new_obj(stats_obj_t);
+    s->base.type = &stats_type;
+    s->a_mean = 128; s->a_stdev = 10;
+    s->b_mean = 128; s->b_stdev = 10;
+    if (n <= 0) {
+        s->l_mean = s->l_stdev = s->l_min = s->l_max = 0;
+        s->clipped_low = s->clipped_high = 0;
+        return MP_OBJ_FROM_PTR(s);
+    }
+
+    long sum = 0;
+    int lmin = 255, lmax = 0, clip_low = 0, clip_high = 0;
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            int i = (y * o->w + x) * 2;
+            unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
+            int r5 = (rgb >> 11) & 0x1f;
+            int g6 = (rgb >> 5) & 0x3f;
+            int b5 = rgb & 0x1f;
+            int r = (r5 << 3) | (r5 >> 2);
+            int g = (g6 << 2) | (g6 >> 4);
+            int b = (b5 << 3) | (b5 >> 2);
+            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            sum += l;
+            if (l < lmin) lmin = l;
+            if (l > lmax) lmax = l;
+            if (l <= 2) clip_low++;
+            if (l >= 253) clip_high++;
+        }
+    }
+    s->l_mean = sum / n;
+    double sq = 0;
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            int i = (y * o->w + x) * 2;
+            unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
+            int r5 = (rgb >> 11) & 0x1f;
+            int g6 = (rgb >> 5) & 0x3f;
+            int b5 = rgb & 0x1f;
+            int r = (r5 << 3) | (r5 >> 2);
+            int g = (g6 << 2) | (g6 >> 4);
+            int b = (b5 << 3) | (b5 >> 2);
+            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            double d = l - s->l_mean;
+            sq += d * d;
+        }
+    }
+    s->l_stdev = (int)sqrt(sq / n);
+    s->l_min = lmin;
+    s->l_max = lmax;
+    s->clipped_low = clip_low;
+    s->clipped_high = clip_high;
+    return MP_OBJ_FROM_PTR(s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_get_statistics_roi_obj, 5, 5,
+                                           image_get_statistics_roi);
+
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
 static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
 static mp_obj_t stats_a_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_mean); }
@@ -325,6 +396,7 @@ static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_to_bytes), MP_ROM_PTR(&image_to_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&image_clear_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_statistics_roi), MP_ROM_PTR(&image_get_statistics_roi_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_method_obj) },
 };
 static MP_DEFINE_CONST_DICT(image_locals_dict, image_locals_dict_table);
