@@ -1103,6 +1103,14 @@ static mp_obj_t lcd_draw_qr_code_binary(size_t n_args, const mp_obj_t *args) {
     }
     max_width = mp_obj_get_int(args[3]);
 
+    /* This is a long pixel loop, just like lcd_display().  Mark the
+     * frame as in progress before touching the framebuffer, otherwise
+     * the quiet-period commit thread can commit a half-drawn QR and
+     * the page then looks cut off.  Mark it dirty again at the end so
+     * the next flush shows the finished code. */
+    lcd.dirty = 0;
+    lcd.draw_count++;
+
     if (n_args >= 5) {
         dark_color = (uint16_t)mp_obj_get_int(args[4]);
     }
@@ -1162,6 +1170,7 @@ static mp_obj_t lcd_draw_qr_code_binary(size_t n_args, const mp_obj_t *args) {
             }
         }
     }
+    lcd_commit();
     return mp_const_none;
 }
 
