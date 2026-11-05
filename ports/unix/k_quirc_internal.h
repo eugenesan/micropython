@@ -108,22 +108,23 @@ static inline void *k_malloc_fast(size_t size) {
 #define QUIRC_PIXEL_REGION 2
 
 #ifndef QUIRC_MAX_REGIONS
-#define QUIRC_MAX_REGIONS 254
+#define QUIRC_MAX_REGIONS 1024
 #endif
 
 #define QUIRC_MAX_CAPSTONES 32
 #define QUIRC_MAX_GRIDS 8
 #define QUIRC_PERSPECTIVE_PARAMS 8
-#define QUIRC_MAX_VERSION 27
-/* Krux/K210 cameras are unreliable above v21; reject larger grids early. */
-#define K_QUIRC_MAX_PROCESS_VERSION 21
+#define QUIRC_MAX_VERSION 40
+/* The hammerhead's full-resolution snapshot can resolve high-density
+ * codes; the K210-era v21 limit was the reason they were rejected. */
+#define K_QUIRC_MAX_PROCESS_VERSION 40
 #define K_QUIRC_MAX_PROCESS_GRID_SIZE (K_QUIRC_MAX_PROCESS_VERSION * 4 + 17)
 #define QUIRC_MAX_ALIGNMENT 7
 /* Flood-fill span stack: entries are 8 bytes each (see xylf_t), so the
  * default costs 64 KB of fast RAM.  Override to trade memory for the
  * ability to fill extremely fragmented regions without overflow. */
 #ifndef QUIRC_FLOOD_FILL_STACK
-#define QUIRC_FLOOD_FILL_STACK 8192
+#define QUIRC_FLOOD_FILL_STACK 32768
 #endif
 
 /* Flood-fill stack entry (defined here so allocation can use its size) */
