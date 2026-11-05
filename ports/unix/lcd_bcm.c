@@ -238,7 +238,7 @@ static void *lcd_commit_thread(void *arg) {
     (void)arg;
     for (;;) {
         uint32_t count;
-        usleep(50000);
+        usleep(200000);
         count = lcd.draw_count;
         if (count != last_count) {
             /* still drawing: wait for it to finish */
