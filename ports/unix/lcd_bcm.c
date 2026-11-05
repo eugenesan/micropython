@@ -130,9 +130,12 @@ struct lcd_state {
     int ready;
     int dirty;                /* something was drawn since the last commit */
     volatile uint32_t draw_count;    /* the drawing calls, for the commit thread */
+    pthread_mutex_t commit_mutex;
 };
 
-static struct lcd_state lcd;
+static struct lcd_state lcd = {
+    .commit_mutex = PTHREAD_MUTEX_INITIALIZER,
+};
 
 /* defined below; the drawing calls it */
 static void lcd_commit(void);
@@ -169,7 +172,7 @@ static void lcd_fail(const char *what) {
  * is exactly where a page ends: the firmware draws a page and then
  * waits for a key.
  */
-static void lcd_do_commit(void) {
+static void lcd_do_commit_locked(void) {
     struct mdp_display_commit dc;
     struct fb_var_screeninfo var;
 
@@ -181,6 +184,9 @@ static void lcd_do_commit(void) {
 
     memset(&dc, 0, sizeof(dc));
     dc.flags = 0;
+    /* Non-blocking: the deferred commit thread and the explicit preview
+     * commits both use this, and waiting for the panel on every frame
+     * stalls the whole page. */
     dc.wait_for_finish = 0;
     dc.var = var;
     dc.var.xoffset = 0;
@@ -199,6 +205,12 @@ static void lcd_do_commit(void) {
         lcd.last_pan_offset = lcd.pan_offset;
     }
     lcd.dirty = 0;
+}
+
+static void lcd_do_commit(void) {
+    pthread_mutex_lock(&lcd.commit_mutex);
+    lcd_do_commit_locked();
+    pthread_mutex_unlock(&lcd.commit_mutex);
 }
 
 /* The drawing calls this: it only says that something changed. */
@@ -233,8 +245,12 @@ static void *lcd_commit_thread(void *arg) {
             last_count = count;
             continue;
         }
-        if (lcd.dirty)
-            lcd_do_commit();
+        pthread_mutex_lock(&lcd.commit_mutex);
+        /* Preview frames are committed explicitly after rendering.  The
+         * quiet-period thread must not commit a partially drawn frame. */
+        if (lcd.dirty && !lcd.preview)
+            lcd_do_commit_locked();
+        pthread_mutex_unlock(&lcd.commit_mutex);
     }
     return NULL;
 }
@@ -591,37 +607,43 @@ static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
     return mp_const_none;
 }
 
-/* Camera preview double buffering.
- *
- * Drawing the 320x240 frame into the same plane the panel is scanning
- * tears: the panel can read the old half of a row and the new half,
- * which shows up as a horizontal sliding seam.  The framebuffer has
- * three planes, so the preview draws into the plane that is not
- * visible, then flips the panel to it.  The next frame draws into the
- * old front plane, now hidden.
- */
+/* Camera preview commits.  The framebuffer is the source, not the panel's
+ * scanout buffer, so each completed frame is committed explicitly.  The
+ * quiet-period commit thread is suppressed while preview is active so it
+ * cannot commit a half-drawn frame.  Do not pan between framebuffer planes
+ * on every update: that allocates base overlay pipes and blanks the panel. */
 static mp_obj_t lcd_preview_start(void) {
     if (!lcd.ready)
         return mp_const_none;
+
+    pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 1;
     lcd.pan_offset = lcd.visible_offset;
     lcd.dirty = 0;
+    pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
 
 static mp_obj_t lcd_preview_flip(void) {
     if (!lcd.ready || !lcd.preview)
         return mp_const_none;
-    lcd.dirty = 0;
+
+    pthread_mutex_lock(&lcd.commit_mutex);
+    if (lcd.dirty)
+        lcd_do_commit_locked();
+    pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
 
 static mp_obj_t lcd_preview_stop(void) {
     if (!lcd.ready)
         return mp_const_none;
+
+    pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 0;
     lcd.pan_offset = lcd.visible_offset;
-    lcd.dirty = 1;
+    lcd.dirty = 0;
+    pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
 

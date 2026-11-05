@@ -203,6 +203,11 @@ static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
         int r = (rgb >> 11) & 0x1f;
         int g = (rgb >> 5) & 0x3f;
         int b = rgb & 0x1f;
+        /* Expand RGB565 channels before converting to luma so the decoder
+         * receives the expected full-range 8-bit grayscale values. */
+        r = (r << 3) | (r >> 2);
+        g = (g << 2) | (g >> 4);
+        b = (b << 3) | (b >> 2);
         gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
     }
 
