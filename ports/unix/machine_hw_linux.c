@@ -308,17 +308,16 @@ MP_DEFINE_CONST_OBJ_TYPE(
  *
  * The call never returns: the firmware expects it not to (it is
  * followed by sys.exit()), and if it did return, the firmware would
- * carry on as if the phone had been reset. */
+ * carry on as if the phone had been reset.
+ *
+ * There is deliberately no kernel-wipe path here.  The experiment that
+ * kexec'd the same kernel with wipe=1 lived on the airgap/memory-wipe
+ * branch: its handoff hangs at the bootloader, and it was reachable
+ * from every machine.reset() -- the shutdown menu item and the
+ * auto-shutdown included -- which made an ordinary shutdown try to
+ * wipe the machine. */
 
 static void machine_reset_do(const char *what) {
-    // Prefer the kernel wipe path: kexec the same kernel with wipe=1,
-    // which zeroes free RAM and powers off.  On success it never
-    // returns.  If the wrapper is absent or kexec fails, fall through
-    // to the normal powerctl path.
-    char *wipe_argv[] = {(char *)"/sbin/krux-wipe", NULL};
-    char *wipe_envp[] = {(char *)"PATH=/sbin:/system/bin", NULL};
-    execve("/sbin/krux-wipe", wipe_argv, wipe_envp);
-
     // The direct route.  LINUX_REBOOT_CMD_POWER_OFF / RESTART, with
     // the magic the kernel checks.  The syscall is used raw because
     // the armel sysroot has no reboot(2) declaration that this static
