@@ -94,6 +94,16 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     int src_h = mp_obj_get_int(args[2]);
     int dst_w = mp_obj_get_int(args[5]);
     int dst_h = mp_obj_get_int(args[6]);
+    /* The chroma plane, when there is one.  args[8] is the interleaved
+     * (U,V) plane at half the width and height. */
+    mp_buffer_info_t uvinfo;
+    const uint8_t *uvsrc = NULL;
+    int uv_stride = 0;
+    if (n_args >= 9) {
+        mp_get_buffer_raise(args[8], &uvinfo, MP_BUFFER_READ);
+        uvsrc = (const uint8_t *)uvinfo.buf;
+        uv_stride = dst_w / 2;
+    }
 
     image_obj_t *o = m_new_obj(image_obj_t);
     o->base.type = &image_type;
@@ -104,7 +114,7 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     if (src_w == dst_w && src_h == dst_h) {
         /* The luma the sensor produced, kept as it is. */
         o->gray = m_new(uint8_t, dst_w * dst_h);
-        memcpy(o->gray, args[0], dst_w * dst_h);
+        memcpy(o->gray, bufinfo.buf, dst_w * dst_h);
     }
 
     const unsigned char *src = (const unsigned char *)bufinfo.buf;
@@ -116,14 +126,33 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
             int src_x = x * sx_ratio; if (src_x >= src_w) src_x = src_w - 1;
             int src_y = y * sy_ratio; if (src_y >= src_h) src_y = src_h - 1;
             unsigned char val = src[src_y * src_w + src_x];
-            unsigned short rgb = ((val >> 3) << 11) | ((val >> 2) << 5) | (val >> 3);
+            unsigned short rgb;
+            if (uvsrc != NULL) {
+                /* The real colour.  Packing the luma into all three
+                 * channels threw the chroma away and left the picture
+                 * monochrome, and it quantised the luma to five bits
+                 * in two of the three channels. */
+                int uv_x = x / 2; if (uv_x >= uv_stride) uv_x = uv_stride - 1;
+                int uv_y = y / 2;
+                int u = uvsrc[(uv_y * uv_stride + uv_x) * 2] - 128;
+                int v = uvsrc[(uv_y * uv_stride + uv_x) * 2 + 1] - 128;
+                int r = val + ((359 * v + 128) >> 8);
+                int g = val - ((88 * u + 183 * v + 128) >> 8);
+                int b = val + ((454 * u + 128) >> 8);
+                if (r < 0) r = 0; else if (r > 255) r = 255;
+                if (g < 0) g = 0; else if (g > 255) g = 255;
+                if (b < 0) b = 0; else if (b > 255) b = 255;
+                rgb = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+            } else {
+                rgb = ((val >> 3) << 11) | ((val >> 2) << 5) | (val >> 3);
+            }
             o->buf[(y * dst_w + x) * 2] = rgb & 0xff;
             o->buf[(y * dst_w + x) * 2 + 1] = (rgb >> 8) & 0xff;
         }
     }
     return MP_OBJ_FROM_PTR(o);
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_from_nv12_obj, 7, 8, image_from_nv12);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_from_nv12_obj, 7, 9, image_from_nv12);
 
 /* QR result object */
 typedef struct {
