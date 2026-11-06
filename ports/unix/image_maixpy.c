@@ -11,6 +11,15 @@ typedef struct {
     mp_obj_base_t base;
     int w, h;
     unsigned char *buf;
+    /* The luma plane, when the frame came from the camera.
+     *
+     * The decoder and the statistics want the sensor's own luma.
+     * Going through RGB565 and back throws it away: R and B are five
+     * bits there, so the luma the decoder sees is off by up to five
+     * levels on every pixel -- which is most of the contrast on the
+     * edge of a small module, and the reason a dense code only read
+     * over a narrow band of exposures. */
+    unsigned char *gray;
 } image_obj_t;
 
 typedef struct {
@@ -91,6 +100,12 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     o->w = dst_w; o->h = dst_h;
     o->buf = m_new(uint8_t, dst_w * dst_h * 2);
     memset(o->buf, 0, dst_w * dst_h * 2);
+    o->gray = NULL;
+    if (src_w == dst_w && src_h == dst_h) {
+        /* The luma the sensor produced, kept as it is. */
+        o->gray = m_new(uint8_t, dst_w * dst_h);
+        memcpy(o->gray, args[0], dst_w * dst_h);
+    }
 
     const unsigned char *src = (const unsigned char *)bufinfo.buf;
     int sx_ratio = src_w / dst_w; if (sx_ratio < 1) sx_ratio = 1;
@@ -207,25 +222,33 @@ static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
     bool find_inverted = false;
     if (n_args >= 2) find_inverted = mp_obj_get_int(args[1]);
 
-    /* convert RGB565 to grayscale */
+    /* The sensor's own luma, when the frame came from the camera.
+     * Only a frame that was built some other way has to be converted,
+     * and then the luma is rebuilt from a five-bit-per-channel
+     * picture, which is worth up to five levels on every pixel. */
     int npix = o->w * o->h;
-    uint8_t *gray = malloc(npix);
-    for (int i = 0; i < npix; i++) {
-        unsigned short rgb = o->buf[i*2] | (o->buf[i*2+1] << 8);
-        int r = (rgb >> 11) & 0x1f;
-        int g = (rgb >> 5) & 0x3f;
-        int b = rgb & 0x1f;
-        /* Expand RGB565 channels before converting to luma so the decoder
-         * receives the expected full-range 8-bit grayscale values. */
-        r = (r << 3) | (r >> 2);
-        g = (g << 2) | (g >> 4);
-        b = (b << 3) | (b >> 2);
-        gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+    uint8_t *own_gray = NULL;
+    const uint8_t *gray = o->gray;
+    if (gray == NULL) {
+        own_gray = malloc(npix);
+        gray = own_gray;
+        for (int i = 0; i < npix; i++) {
+            unsigned short rgb = o->buf[i*2] | (o->buf[i*2+1] << 8);
+            int r = (rgb >> 11) & 0x1f;
+            int g = (rgb >> 5) & 0x3f;
+            int b = rgb & 0x1f;
+            /* Expand RGB565 channels before converting to luma so the decoder
+             * receives the expected full-range 8-bit grayscale values. */
+            r = (r << 3) | (r >> 2);
+            g = (g << 2) | (g >> 4);
+            b = (b << 3) | (b >> 2);
+            own_gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+        }
     }
 
     k_quirc_result_t results[8];
     int n = k_quirc_decode_grayscale(gray, o->w, o->h, results, 8, find_inverted);
-    free(gray);
+    free(own_gray);
 
     mp_obj_t items[n > 0 ? n : 0];
     for (int i = 0; i < n; i++) {
@@ -238,6 +261,27 @@ static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 1, image_find_qrcodes);
 
+/* How close to the brightest pixel a pixel has to be to count as
+ * one of the bright ones. */
+#define BRIGHT_MARGIN 40
+
+/* The luma of one pixel.  The sensor's own plane when the frame came
+ * from the camera, and the RGB565 picture otherwise: the latter
+ * rebuilds the luma from five-bit channels, so it is worth up to five
+ * levels on every pixel. */
+static inline int image_luma(const image_obj_t *o, int i, const uint8_t *gray) {
+    if (gray != NULL)
+        return gray[i];
+    unsigned short rgb = o->buf[i*2] | (o->buf[i*2+1] << 8);
+    int r5 = (rgb >> 11) & 0x1f;
+    int g6 = (rgb >> 5) & 0x3f;
+    int b5 = rgb & 0x1f;
+    int r = (r5 << 3) | (r5 >> 2);
+    int g = (g6 << 2) | (g6 >> 4);
+    int b = (b5 << 3) | (b5 >> 2);
+    return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
 static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     image_obj_t *o = MP_OBJ_TO_PTR(self_in);
     stats_obj_t *s = m_new_obj(stats_obj_t);
@@ -247,15 +291,9 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     double sq = 0;
     int lmin = 255, lmax = 0, clip_low = 0, clip_high = 0;
 
+    const uint8_t *gray = o->gray;
     for (int i = 0; i < n; i++) {
-        unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
-        int r5 = (rgb >> 11) & 0x1f;
-        int g6 = (rgb >> 5) & 0x3f;
-        int b5 = rgb & 0x1f;
-        int r = (r5 << 3) | (r5 >> 2);
-        int g = (g6 << 2) | (g6 >> 4);
-        int b = (b5 << 3) | (b5 >> 2);
-        int l = (r * 299 + g * 587 + b * 114) / 1000;
+        int l = image_luma(o, i, gray);
         sum += l;
         if (l < lmin) lmin = l;
         if (l > lmax) lmax = l;
@@ -264,14 +302,7 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     }
     s->l_mean = sum / n;
     for (int i = 0; i < n; i++) {
-        unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
-        int r5 = (rgb >> 11) & 0x1f;
-        int g6 = (rgb >> 5) & 0x3f;
-        int b5 = rgb & 0x1f;
-        int r = (r5 << 3) | (r5 >> 2);
-        int g = (g6 << 2) | (g6 >> 4);
-        int b = (b5 << 3) | (b5 >> 2);
-        int l = (r * 299 + g * 587 + b * 114) / 1000;
+        int l = image_luma(o, i, gray);
         double d = l - s->l_mean;
         sq += d * d;
     }
@@ -287,14 +318,7 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
         if (thresh < 0)
             thresh = 0;
         for (int i = 0; i < n; i++) {
-            unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
-            int r5 = (rgb >> 11) & 0x1f;
-            int g6 = (rgb >> 5) & 0x3f;
-            int b5 = rgb & 0x1f;
-            int r = (r5 << 3) | (r5 >> 2);
-            int g = (g6 << 2) | (g6 >> 4);
-            int b = (b5 << 3) | (b5 >> 2);
-            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            int l = image_luma(o, i, o->gray);
             if (l >= thresh) {
                 bsum += l;
                 bcount++;
@@ -337,15 +361,7 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
     int lmin = 255, lmax = 0, clip_low = 0, clip_high = 0;
     for (int y = y0; y < y1; y++) {
         for (int x = x0; x < x1; x++) {
-            int i = (y * o->w + x) * 2;
-            unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
-            int r5 = (rgb >> 11) & 0x1f;
-            int g6 = (rgb >> 5) & 0x3f;
-            int b5 = rgb & 0x1f;
-            int r = (r5 << 3) | (r5 >> 2);
-            int g = (g6 << 2) | (g6 >> 4);
-            int b = (b5 << 3) | (b5 >> 2);
-            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            int l = image_luma(o, y * o->w + x, o->gray);
             sum += l;
             if (l < lmin) lmin = l;
             if (l > lmax) lmax = l;
@@ -357,15 +373,7 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
     double sq = 0;
     for (int y = y0; y < y1; y++) {
         for (int x = x0; x < x1; x++) {
-            int i = (y * o->w + x) * 2;
-            unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
-            int r5 = (rgb >> 11) & 0x1f;
-            int g6 = (rgb >> 5) & 0x3f;
-            int b5 = rgb & 0x1f;
-            int r = (r5 << 3) | (r5 >> 2);
-            int g = (g6 << 2) | (g6 >> 4);
-            int b = (b5 << 3) | (b5 >> 2);
-            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            int l = image_luma(o, y * o->w + x, o->gray);
             double d = l - s->l_mean;
             sq += d * d;
         }
@@ -383,15 +391,7 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
             thresh = 0;
         for (int y = y0; y < y1; y++) {
             for (int x = x0; x < x1; x++) {
-                int i = (y * o->w + x) * 2;
-                unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
-                int r5 = (rgb >> 11) & 0x1f;
-                int g6 = (rgb >> 5) & 0x3f;
-                int b5 = rgb & 0x1f;
-                int r = (r5 << 3) | (r5 >> 2);
-                int g = (g6 << 2) | (g6 >> 4);
-                int b = (b5 << 3) | (b5 >> 2);
-                int l = (r * 299 + g * 587 + b * 114) / 1000;
+                int l = image_luma(o, y * o->w + x, o->gray);
                 if (l >= thresh) {
                     bsum += l;
                     bcount++;
@@ -406,7 +406,6 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_get_statistics_roi_obj, 5, 5,
                                            image_get_statistics_roi);
 
-#define BRIGHT_MARGIN 40
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
 static mp_obj_t stats_l_bright_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_mean); }
 static mp_obj_t stats_l_bright_count(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_count); }
