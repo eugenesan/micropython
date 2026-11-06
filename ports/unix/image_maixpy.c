@@ -17,6 +17,18 @@ typedef struct {
     mp_obj_base_t base;
     int l_mean, l_stdev, a_mean, a_stdev, b_mean, b_stdev;
     int l_min, l_max, clipped_low, clipped_high;
+    /* The mean of the pixels that are within BRIGHT_MARGIN of the
+     * brightest pixel of the frame, and how many there are.
+     *
+     * The auto-exposure needs the brightness of the thing it is
+     * pointed at.  A QR code on a screen is a small bright thing in
+     * a usually dark picture: the mean of the picture -- or even of
+     * the middle of it -- says more about the room than about the
+     * code, and the code may not be in the middle of the frame at
+     * all.  The bright pixels are the code's white modules wherever
+     * the code happens to be. */
+    int l_bright_mean;
+    int l_bright_count;
 } stats_obj_t;
 
 /* forward declarations */
@@ -268,6 +280,29 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     s->l_max = lmax;
     s->clipped_low = clip_low;
     s->clipped_high = clip_high;
+    {
+        int thresh = lmax - BRIGHT_MARGIN;
+        long bsum = 0;
+        int bcount = 0;
+        if (thresh < 0)
+            thresh = 0;
+        for (int i = 0; i < n; i++) {
+            unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
+            int r5 = (rgb >> 11) & 0x1f;
+            int g6 = (rgb >> 5) & 0x3f;
+            int b5 = rgb & 0x1f;
+            int r = (r5 << 3) | (r5 >> 2);
+            int g = (g6 << 2) | (g6 >> 4);
+            int b = (b5 << 3) | (b5 >> 2);
+            int l = (r * 299 + g * 587 + b * 114) / 1000;
+            if (l >= thresh) {
+                bsum += l;
+                bcount++;
+            }
+        }
+        s->l_bright_mean = bcount ? (int)(bsum / bcount) : 0;
+        s->l_bright_count = bcount;
+    }
     s->a_mean = 128; s->a_stdev = 10;
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
@@ -340,12 +375,41 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
     s->l_max = lmax;
     s->clipped_low = clip_low;
     s->clipped_high = clip_high;
+    {
+        int thresh = lmax - BRIGHT_MARGIN;
+        long bsum = 0;
+        int bcount = 0;
+        if (thresh < 0)
+            thresh = 0;
+        for (int y = y0; y < y1; y++) {
+            for (int x = x0; x < x1; x++) {
+                int i = (y * o->w + x) * 2;
+                unsigned short rgb = o->buf[i] | (o->buf[i + 1] << 8);
+                int r5 = (rgb >> 11) & 0x1f;
+                int g6 = (rgb >> 5) & 0x3f;
+                int b5 = rgb & 0x1f;
+                int r = (r5 << 3) | (r5 >> 2);
+                int g = (g6 << 2) | (g6 >> 4);
+                int b = (b5 << 3) | (b5 >> 2);
+                int l = (r * 299 + g * 587 + b * 114) / 1000;
+                if (l >= thresh) {
+                    bsum += l;
+                    bcount++;
+                }
+            }
+        }
+        s->l_bright_mean = bcount ? (int)(bsum / bcount) : 0;
+        s->l_bright_count = bcount;
+    }
     return MP_OBJ_FROM_PTR(s);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_get_statistics_roi_obj, 5, 5,
                                            image_get_statistics_roi);
 
+#define BRIGHT_MARGIN 40
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
+static mp_obj_t stats_l_bright_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_mean); }
+static mp_obj_t stats_l_bright_count(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_count); }
 static mp_obj_t stats_l_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_stdev); }
 static mp_obj_t stats_a_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_mean); }
 static mp_obj_t stats_a_stdev(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->a_stdev); }
@@ -358,6 +422,8 @@ static mp_obj_t stats_clipped_low(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO
 static mp_obj_t stats_clipped_high(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->clipped_high); }
 
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_bright_mean_obj, stats_l_bright_mean);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_bright_count_obj, stats_l_bright_count);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_stdev_obj, stats_l_stdev);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_mean_obj, stats_a_mean);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_a_stdev_obj, stats_a_stdev);
@@ -371,6 +437,8 @@ static MP_DEFINE_CONST_FUN_OBJ_1(stats_clipped_high_obj, stats_clipped_high);
 
 static const mp_rom_map_elem_t stats_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_l_mean), MP_ROM_PTR(&stats_l_mean_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_bright_mean), MP_ROM_PTR(&stats_l_bright_mean_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_bright_count), MP_ROM_PTR(&stats_l_bright_count_obj) },
     { MP_ROM_QSTR(MP_QSTR_l_stdev), MP_ROM_PTR(&stats_l_stdev_obj) },
     { MP_ROM_QSTR(MP_QSTR_l_min), MP_ROM_PTR(&stats_l_min_obj) },
     { MP_ROM_QSTR(MP_QSTR_l_max), MP_ROM_PTR(&stats_l_max_obj) },
