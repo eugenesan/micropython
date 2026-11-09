@@ -618,13 +618,26 @@ static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
          * Advance only when something was drawn: the input modules
          * flush while polling for a key, and advancing there would
          * point the panel at a plane nobody drew -- the flicker. */
+        int did = 0;
         pthread_mutex_lock(&lcd.commit_mutex);
         if (lcd.dirty) {
             lcd_do_commit_locked();
             lcd.visible_offset = lcd.pan_offset;
             lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+            did = 1;
         }
         pthread_mutex_unlock(&lcd.commit_mutex);
+        if (did) {
+            /* The commit is queued and the DMA switches to it at the
+             * next vsync.  Wait out one frame here before drawing the
+             * other plane: with a non-blocking commit the display
+             * thread can otherwise still be a frame behind, and the
+             * DMA reads the plane being drawn -- the same tear.  A
+             * sleep is used rather than wait_for_finish because the
+             * ioctl wait is what left the display stuck when the
+             * firmware was stopped mid-commit. */
+            usleep(20000);
+        }
     } else if (lcd.dirty) {
         lcd_do_commit();
     }
