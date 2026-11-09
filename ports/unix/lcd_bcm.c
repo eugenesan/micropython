@@ -184,12 +184,14 @@ static void lcd_do_commit_locked(void) {
 
     memset(&dc, 0, sizeof(dc));
     dc.flags = 0;
-    /* Non-blocking.  The preview is double buffered: the DMA scans the
-     * committed plane while the firmware draws the other one, so the
-     * commit does not have to be waited on.  Waiting for the vsync on
-     * every preview frame is also what left the display hung when the
-     * firmware was stopped in the middle of a commit. */
-    dc.wait_for_finish = 0;
+    /* The UI commits stay non-blocking: they are batched per page and
+     * waiting on each one stalls it.  The preview commits must wait:
+     * the kernel copies the framebuffer to the scanout buffer
+     * asynchronously, and the next preview frame draws over it while
+     * that copy runs.  On the 1080x1080 frame the copy takes long
+     * enough that the panel showed a torn strip of the new frame
+     * beside the old one. */
+    dc.wait_for_finish = lcd.preview ? 1 : 0;
     dc.var = var;
     dc.var.xoffset = 0;
     dc.var.yoffset = lcd.pan_offset;
@@ -200,16 +202,11 @@ static void lcd_do_commit_locked(void) {
      * is the generic one and is what actually flips the panel on this
      * kernel.  Try both. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
-    lcd.last_pan_offset = lcd.pan_offset;
-    /* MSMFB_DISPLAY_COMMIT goes through the same mdss_fb_pan_display_ex
-     * path as FBIOPAN_DISPLAY, so the explicit pan is redundant -- and
-     * doing both every preview frame is what the comment above warns
-     * blanks the panel.  Keep the generic pan only for the UI, where
-     * the offset changes at most once per page. */
-    if (!lcd.preview && lcd.pan_offset != lcd.visible_offset) {
+    if (lcd.pan_offset != lcd.last_pan_offset) {
         var.yoffset = lcd.pan_offset;
         var.xoffset = 0;
         ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
+        lcd.last_pan_offset = lcd.pan_offset;
     }
     lcd.dirty = 0;
 }
@@ -608,37 +605,7 @@ static mp_obj_t lcd_init(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
 static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
     (void)n_args;
     (void)args;
-    if (lcd.preview) {
-        /* Commit the plane just drawn, then move the drawing to the
-         * other plane.  The panel scans the committed one while the
-         * next frame is drawn, so the preview cannot tear.  Drawing
-         * into the plane the panel is scanning is what made the
-         * preview show a rolling strip of the previous frame.
-         *
-         * Advance only when something was drawn: the input modules
-         * flush while polling for a key, and advancing there would
-         * point the panel at a plane nobody drew -- the flicker. */
-        int did = 0;
-        pthread_mutex_lock(&lcd.commit_mutex);
-        if (lcd.dirty) {
-            lcd_do_commit_locked();
-            lcd.visible_offset = lcd.pan_offset;
-            lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
-            did = 1;
-        }
-        pthread_mutex_unlock(&lcd.commit_mutex);
-        if (did) {
-            /* The commit is queued and the DMA switches to it at the
-             * next vsync.  Wait out one frame here before drawing the
-             * other plane: with a non-blocking commit the display
-             * thread can otherwise still be a frame behind, and the
-             * DMA reads the plane being drawn -- the same tear.  A
-             * sleep is used rather than wait_for_finish because the
-             * ioctl wait is what left the display stuck when the
-             * firmware was stopped mid-commit. */
-            usleep(20000);
-        }
-    } else if (lcd.dirty) {
+    if (lcd.dirty) {
         lcd_do_commit();
     }
     return mp_const_none;
@@ -655,8 +622,7 @@ static mp_obj_t lcd_preview_start(void) {
 
     pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 1;
-    /* Draw into the plane the panel is NOT scanning. */
-    lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+    lcd.pan_offset = lcd.visible_offset;
     lcd.dirty = 0;
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
@@ -667,11 +633,8 @@ static mp_obj_t lcd_preview_flip(void) {
         return mp_const_none;
 
     pthread_mutex_lock(&lcd.commit_mutex);
-    if (lcd.dirty) {
+    if (lcd.dirty)
         lcd_do_commit_locked();
-        lcd.visible_offset = lcd.pan_offset;
-        lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
-    }
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
