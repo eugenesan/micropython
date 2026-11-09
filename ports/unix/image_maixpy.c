@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "py/runtime.h"
 #include "py/obj.h"
@@ -134,6 +138,95 @@ static mp_obj_t image_from_nv12(size_t n_args, const mp_obj_t *args) {
     return MP_OBJ_FROM_PTR(o);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_from_nv12_obj, 7, 9, image_from_nv12);
+
+/* ------------------------------------------------------------------ *
+ * the shared-memory frame
+ *
+ * camd publishes the preview luma into /dev/shm/krux-frame; this maps
+ * it once and reads it with a seqlock, so the 691 KB socket copy is
+ * gone.  Only the luma is read: the picture is built grey from it,
+ * and the chroma is not used.
+ * ------------------------------------------------------------------ */
+#define SHM_PATH "/tmp/krux/frame"
+#define SHM_MAGIC 0x4b435246u
+struct shm_frame_hdr {
+    volatile uint32_t seq;      /* odd = writing, even = stable */
+    uint32_t magic;
+    uint32_t w, h;
+    uint32_t y_size;
+    uint32_t frame_seq;
+    uint32_t sweeping;
+};
+
+static int shm_fd = -1;
+static unsigned char *shm_base;
+static size_t shm_size;
+
+static int shm_attach(void) {
+    if (shm_base) return 0;
+    shm_fd = open(SHM_PATH, O_RDONLY);
+    if (shm_fd < 0) return -1;
+    struct stat st;
+    if (fstat(shm_fd, &st) < 0 ||
+        st.st_size < (off_t)sizeof(struct shm_frame_hdr)) {
+        close(shm_fd); shm_fd = -1;
+        return -1;
+    }
+    shm_size = st.st_size;
+    shm_base = mmap(NULL, shm_size, PROT_READ, MAP_SHARED, shm_fd, 0);
+    if (shm_base == MAP_FAILED) {
+        shm_base = NULL; close(shm_fd); shm_fd = -1;
+        return -1;
+    }
+    return 0;
+}
+
+static mp_obj_t image_from_shared(void) {
+    if (shm_attach() < 0) return mp_const_none;
+    struct shm_frame_hdr *h = (struct shm_frame_hdr *)shm_base;
+    if (h->magic != SHM_MAGIC) return mp_const_none;
+    uint32_t w = h->w, hh = h->h;
+    if (w == 0 || hh == 0 || h->y_size < w * hh) return mp_const_none;
+
+    image_obj_t *o = m_new_obj(image_obj_t);
+    o->base.type = &image_type;
+    o->w = w; o->h = hh;
+    o->buf = m_new(uint8_t, w * hh * 2);
+    o->gray = m_new(uint8_t, w * hh);
+
+    const unsigned char *src = shm_base + sizeof(*h);
+    size_t n = (size_t)w * hh;
+    for (;;) {
+        uint32_t s1 = h->seq;
+        if (s1 & 1u) continue;      /* a write is in progress */
+        memcpy(o->gray, src, n);
+        __sync_synchronize();
+        uint32_t s2 = h->seq;
+        if (s1 == s2) break;        /* no write happened during the copy */
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        unsigned char val = o->gray[i];
+        unsigned short rgb = ((val >> 3) << 11) | ((val >> 2) << 5) | (val >> 3);
+        o->buf[i * 2] = rgb & 0xff;
+        o->buf[i * 2 + 1] = (rgb >> 8) & 0xff;
+    }
+    return MP_OBJ_FROM_PTR(o);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(image_from_shared_obj, image_from_shared);
+
+/* (frame_seq, sweeping) from the shared header, so the firmware can
+ * throttle and know the autofocus state without a socket round trip. */
+static mp_obj_t image_shared_status(void) {
+    if (shm_attach() < 0) return mp_const_none;
+    struct shm_frame_hdr *h = (struct shm_frame_hdr *)shm_base;
+    mp_obj_t t[2] = {
+        mp_obj_new_int((mp_int_t)h->frame_seq),
+        mp_obj_new_int((mp_int_t)h->sweeping),
+    };
+    return mp_obj_new_tuple(2, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(image_shared_status_obj, image_shared_status);
 
 /* QR result object */
 typedef struct {
@@ -497,6 +590,8 @@ static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__image) },
     { MP_ROM_QSTR(MP_QSTR_Image), MP_ROM_PTR(&image_type) },
     { MP_ROM_QSTR(MP_QSTR_from_nv12), MP_ROM_PTR(&image_from_nv12_obj) },
+    { MP_ROM_QSTR(MP_QSTR_from_shared), MP_ROM_PTR(&image_from_shared_obj) },
+    { MP_ROM_QSTR(MP_QSTR_shared_status), MP_ROM_PTR(&image_shared_status_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_obj) },
 };
 static MP_DEFINE_CONST_DICT(image_module_globals, image_module_globals_table);
