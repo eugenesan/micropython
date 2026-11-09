@@ -615,12 +615,17 @@ static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
          * other plane.  The panel scans the committed one while the
          * next frame is drawn, so the preview cannot tear.  Drawing
          * into the plane the panel is scanning is what made the
-         * preview show a rolling strip of the previous frame. */
+         * preview show a rolling strip of the previous frame.
+         *
+         * Advance only when something was drawn: the input modules
+         * flush while polling for a key, and advancing there would
+         * point the panel at a plane nobody drew -- the flicker. */
         pthread_mutex_lock(&lcd.commit_mutex);
-        if (lcd.dirty)
+        if (lcd.dirty) {
             lcd_do_commit_locked();
-        lcd.visible_offset = lcd.pan_offset;
-        lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+            lcd.visible_offset = lcd.pan_offset;
+            lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+        }
         pthread_mutex_unlock(&lcd.commit_mutex);
     } else if (lcd.dirty) {
         lcd_do_commit();
@@ -651,10 +656,11 @@ static mp_obj_t lcd_preview_flip(void) {
         return mp_const_none;
 
     pthread_mutex_lock(&lcd.commit_mutex);
-    if (lcd.dirty)
+    if (lcd.dirty) {
         lcd_do_commit_locked();
-    lcd.visible_offset = lcd.pan_offset;
-    lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+        lcd.visible_offset = lcd.pan_offset;
+        lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+    }
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
