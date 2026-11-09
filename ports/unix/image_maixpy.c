@@ -268,6 +268,32 @@ static mp_obj_t image_shared_geometry(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(image_shared_geometry_obj, image_shared_geometry);
 
+/* Drop the shared-memory mappings.  camd recreates/truncates the
+ * regions when it restarts, and a mapping made before that can be the
+ * wrong size for the new mode -- reading it gives a torn or stale
+ * frame.  sensor.reset() calls this so the next snapshot maps the
+ * region the running daemon actually publishes. */
+static mp_obj_t image_shared_reset(void) {
+    if (shm_base) {
+        munmap(shm_base, shm_size);
+        shm_base = NULL;
+    }
+    if (shm_fd >= 0) {
+        close(shm_fd);
+        shm_fd = -1;
+    }
+    if (crop_shm_base) {
+        munmap(crop_shm_base, crop_shm_size);
+        crop_shm_base = NULL;
+    }
+    if (crop_shm_fd >= 0) {
+        close(crop_shm_fd);
+        crop_shm_fd = -1;
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(image_shared_reset_obj, image_shared_reset);
+
 /* (frame_seq, sweeping) from the shared header, so the firmware can
  * throttle and know the autofocus state without a socket round trip. */
 static mp_obj_t image_shared_status(void) {
@@ -720,6 +746,7 @@ static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_from_crop), MP_ROM_PTR(&image_from_crop_obj) },
     { MP_ROM_QSTR(MP_QSTR_shared_status), MP_ROM_PTR(&image_shared_status_obj) },
     { MP_ROM_QSTR(MP_QSTR_shared_geometry), MP_ROM_PTR(&image_shared_geometry_obj) },
+    { MP_ROM_QSTR(MP_QSTR_shared_reset), MP_ROM_PTR(&image_shared_reset_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_obj) },
     { MP_ROM_QSTR(MP_QSTR_qr_scan), MP_ROM_PTR(&image_qr_scan_obj) },
 };
