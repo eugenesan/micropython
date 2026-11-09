@@ -202,11 +202,16 @@ static void lcd_do_commit_locked(void) {
      * is the generic one and is what actually flips the panel on this
      * kernel.  Try both. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
-    if (lcd.pan_offset != lcd.last_pan_offset) {
+    lcd.last_pan_offset = lcd.pan_offset;
+    /* MSMFB_DISPLAY_COMMIT goes through the same mdss_fb_pan_display_ex
+     * path as FBIOPAN_DISPLAY, so the explicit pan is redundant -- and
+     * doing both every preview frame is what the comment above warns
+     * blanks the panel.  Keep the generic pan only for the UI, where
+     * the offset changes at most once per page. */
+    if (!lcd.preview && lcd.pan_offset != lcd.visible_offset) {
         var.yoffset = lcd.pan_offset;
         var.xoffset = 0;
         ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
-        lcd.last_pan_offset = lcd.pan_offset;
     }
     lcd.dirty = 0;
 }
@@ -605,7 +610,19 @@ static mp_obj_t lcd_init(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
 static mp_obj_t lcd_flush(size_t n_args, const mp_obj_t *args) {
     (void)n_args;
     (void)args;
-    if (lcd.dirty) {
+    if (lcd.preview) {
+        /* Commit the plane just drawn, then move the drawing to the
+         * other plane.  The panel scans the committed one while the
+         * next frame is drawn, so the preview cannot tear.  Drawing
+         * into the plane the panel is scanning is what made the
+         * preview show a rolling strip of the previous frame. */
+        pthread_mutex_lock(&lcd.commit_mutex);
+        if (lcd.dirty)
+            lcd_do_commit_locked();
+        lcd.visible_offset = lcd.pan_offset;
+        lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
+        pthread_mutex_unlock(&lcd.commit_mutex);
+    } else if (lcd.dirty) {
         lcd_do_commit();
     }
     return mp_const_none;
@@ -622,7 +639,8 @@ static mp_obj_t lcd_preview_start(void) {
 
     pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 1;
-    lcd.pan_offset = lcd.visible_offset;
+    /* Draw into the plane the panel is NOT scanning. */
+    lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
     lcd.dirty = 0;
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
@@ -635,6 +653,8 @@ static mp_obj_t lcd_preview_flip(void) {
     pthread_mutex_lock(&lcd.commit_mutex);
     if (lcd.dirty)
         lcd_do_commit_locked();
+    lcd.visible_offset = lcd.pan_offset;
+    lcd.pan_offset = (lcd.visible_offset == 0) ? lcd.phys_height : 0;
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
 }
