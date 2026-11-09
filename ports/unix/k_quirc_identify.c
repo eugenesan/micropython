@@ -1406,8 +1406,12 @@ static void measure_grid_size(struct k_quirc *q, int index) {
   float grid_size_estimate = (ver_grid + hor_grid) * 0.5f;
 
   int ver = (int)((grid_size_estimate - 15.0f) * 0.25f);
-  if (ver > QUIRC_MAX_VERSION)
-    ver = QUIRC_MAX_VERSION;
+  /* Clamp to the processing cap, not the database's maximum: the
+   * estimate is noisy, and a genuine V20 measured as V21 must still be
+   * sampled as V20 rather than rejected.  Codes above the cap simply
+   * fail to decode (and the cap is the deliberate cost saving). */
+  if (ver > K_QUIRC_MAX_PROCESS_VERSION)
+    ver = K_QUIRC_MAX_PROCESS_VERSION;
 
   qr->grid_size = 4 * ver + 17;
 }

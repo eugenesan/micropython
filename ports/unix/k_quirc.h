@@ -20,7 +20,7 @@
 
 /* Buffer limits are sized for version 27, though processing is capped lower
  * (see K_QUIRC_MAX_PROCESS_VERSION). */
-#define K_QUIRC_MAX_BITMAP 1954  /* ceil(125*125/8) for version 27 */
+#define K_QUIRC_MAX_BITMAP 1177  /* ceil(97*97/8) for version 20 */
 #define K_QUIRC_MAX_PAYLOAD 2560 /* v27 total codewords 1990 < 2560 */
 
 /* QR-code ECC types. */
@@ -71,6 +71,17 @@ typedef struct {
   k_quirc_data_t data;
   bool valid;
 } k_quirc_result_t;
+
+/* A located QR candidate.  Unlike k_quirc_result_t, a scan returns
+ * every grid the finder pass located, even when the decode failed, so
+ * the caller can crop that region and retry at a higher resolution.
+ * corners are the symbol's four corners; grid_size is 4*version+17. */
+typedef struct {
+  k_quirc_point_t corners[4];
+  k_quirc_data_t data;
+  bool valid;   /* the payload decoded */
+  int grid_size;
+} k_quirc_scan_t;
 
 /* Opaque decoder context */
 typedef struct k_quirc k_quirc_t;
@@ -154,6 +165,26 @@ const char *k_quirc_strerror(k_quirc_error_t err);
 int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
                              int height, k_quirc_result_t *results,
                              int max_results, bool find_inverted);
+
+/**
+ * Locate and decode every QR candidate in a grayscale image.
+ * Unlike k_quirc_decode_grayscale, candidates that were located but
+ * failed to decode are returned too (valid == false), with their
+ * corners and grid_size filled in.
+ *
+ * @return Number of located candidates (<= max_results)
+ */
+int k_quirc_scan_grayscale(const uint8_t *grayscale_data, int width,
+                           int height, k_quirc_scan_t *results,
+                           int max_results, bool find_inverted);
+
+/**
+ * Same as k_quirc_scan_grayscale, but on a caller-owned context so the
+ * image and pixel buffers are allocated once and reused across frames.
+ */
+int k_quirc_scan_ctx(k_quirc_t *q, const uint8_t *grayscale_data, int width,
+                     int height, k_quirc_scan_t *results,
+                     int max_results, bool find_inverted);
 
 /* Debug visualization support */
 #ifdef K_QUIRC_DEBUG

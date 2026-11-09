@@ -156,11 +156,17 @@ struct shm_frame_hdr {
     uint32_t y_size;
     uint32_t frame_seq;
     uint32_t sweeping;
+    uint32_t src_w, src_h;      /* the sensor window the preview came from */
 };
 
 static int shm_fd = -1;
 static unsigned char *shm_base;
 static size_t shm_size;
+
+/* The QR retry crop, published by camd on request. */
+static int crop_shm_fd = -1;
+static unsigned char *crop_shm_base;
+static size_t crop_shm_size;
 
 static int shm_attach(void) {
     if (shm_base) return 0;
@@ -181,9 +187,10 @@ static int shm_attach(void) {
     return 0;
 }
 
-static mp_obj_t image_from_shared(void) {
-    if (shm_attach() < 0) return mp_const_none;
-    struct shm_frame_hdr *h = (struct shm_frame_hdr *)shm_base;
+/* Build an image from a shared region: a seqlock header followed by
+ * the luma.  The picture is grey, built from the luma alone. */
+static mp_obj_t image_from_shm_base(unsigned char *base) {
+    struct shm_frame_hdr *h = (struct shm_frame_hdr *)base;
     if (h->magic != SHM_MAGIC) return mp_const_none;
     uint32_t w = h->w, hh = h->h;
     if (w == 0 || hh == 0 || h->y_size < w * hh) return mp_const_none;
@@ -194,7 +201,7 @@ static mp_obj_t image_from_shared(void) {
     o->buf = m_new(uint8_t, w * hh * 2);
     o->gray = m_new(uint8_t, w * hh);
 
-    const unsigned char *src = shm_base + sizeof(*h);
+    const unsigned char *src = base + sizeof(*h);
     size_t n = (size_t)w * hh;
     for (;;) {
         uint32_t s1 = h->seq;
@@ -213,7 +220,53 @@ static mp_obj_t image_from_shared(void) {
     }
     return MP_OBJ_FROM_PTR(o);
 }
+
+static mp_obj_t image_from_shared(void) {
+    if (shm_attach() < 0) return mp_const_none;
+    return image_from_shm_base(shm_base);
+}
 static MP_DEFINE_CONST_FUN_OBJ_0(image_from_shared_obj, image_from_shared);
+
+static int crop_shm_attach(void) {
+    if (crop_shm_base) return 0;
+    crop_shm_fd = open("/tmp/krux/crop", O_RDONLY);
+    if (crop_shm_fd < 0) return -1;
+    struct stat st;
+    if (fstat(crop_shm_fd, &st) < 0 ||
+        st.st_size < (off_t)sizeof(struct shm_frame_hdr)) {
+        close(crop_shm_fd); crop_shm_fd = -1;
+        return -1;
+    }
+    crop_shm_size = st.st_size;
+    crop_shm_base = mmap(NULL, crop_shm_size, PROT_READ, MAP_SHARED,
+                         crop_shm_fd, 0);
+    if (crop_shm_base == MAP_FAILED) {
+        crop_shm_base = NULL; close(crop_shm_fd); crop_shm_fd = -1;
+        return -1;
+    }
+    return 0;
+}
+
+static mp_obj_t image_from_crop(void) {
+    if (crop_shm_attach() < 0) return mp_const_none;
+    return image_from_shm_base(crop_shm_base);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(image_from_crop_obj, image_from_crop);
+
+/* (src_w, src_h, out_w, out_h) of the preview, so the firmware can
+ * compute the source pixels-per-module of a located code. */
+static mp_obj_t image_shared_geometry(void) {
+    if (shm_attach() < 0) return mp_const_none;
+    struct shm_frame_hdr *h = (struct shm_frame_hdr *)shm_base;
+    mp_obj_t t[4] = {
+        mp_obj_new_int((mp_int_t)h->src_w),
+        mp_obj_new_int((mp_int_t)h->src_h),
+        mp_obj_new_int((mp_int_t)h->w),
+        mp_obj_new_int((mp_int_t)h->h),
+    };
+    return mp_obj_new_tuple(4, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(image_shared_geometry_obj, image_shared_geometry);
 
 /* (frame_seq, sweeping) from the shared header, so the firmware can
  * throttle and know the autofocus state without a socket round trip. */
@@ -232,7 +285,20 @@ static MP_DEFINE_CONST_FUN_OBJ_0(image_shared_status_obj, image_shared_status);
 typedef struct {
     mp_obj_base_t base;
     k_quirc_result_t res;
+    int grid_size;      /* 4*version+17, or 0 when not located */
 } qr_obj_t;
+
+static mp_obj_t qr_valid(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_bool(o->res.valid);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_valid_obj, qr_valid);
+
+static mp_obj_t qr_grid_size(mp_obj_t self_in) {
+    qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
+    return mp_obj_new_int(o->grid_size);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(qr_grid_size_obj, qr_grid_size);
 
 static mp_obj_t qr_payload(mp_obj_t self_in) {
     qr_obj_t *o = MP_OBJ_TO_PTR(self_in);
@@ -309,6 +375,8 @@ static const mp_rom_map_elem_t qr_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_h), MP_ROM_PTR(&qr_h_obj) },
     { MP_ROM_QSTR(MP_QSTR_corners), MP_ROM_PTR(&qr_corners_obj) },
     { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&qr_rect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_valid), MP_ROM_PTR(&qr_valid_obj) },
+    { MP_ROM_QSTR(MP_QSTR_grid_size), MP_ROM_PTR(&qr_grid_size_obj) },
 };
 static MP_DEFINE_CONST_DICT(qr_locals_dict, qr_locals_dict_table);
 
@@ -358,11 +426,62 @@ static mp_obj_t image_find_qrcodes(size_t n_args, const mp_obj_t *args) {
         qr_obj_t *qo = m_new_obj(qr_obj_t);
         qo->base.type = &qr_type;
         qo->res = results[i];
+        qo->grid_size = results[i].valid ? results[i].data.version * 4 + 17 : 0;
         items[i] = MP_OBJ_FROM_PTR(qo);
     }
     return mp_obj_new_list(n, items);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR(image_find_qrcodes_obj, 1, image_find_qrcodes);
+
+/* Locate every QR candidate, including the ones that failed to decode,
+ * so the caller can crop the region from the full-resolution frame and
+ * retry.  Same luma handling as find_qrcodes. */
+static mp_obj_t image_qr_scan(size_t n_args, const mp_obj_t *args) {
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    bool find_inverted = false;
+    if (n_args >= 2) find_inverted = mp_obj_get_int(args[1]);
+
+    int npix = o->w * o->h;
+    uint8_t *own_gray = NULL;
+    const uint8_t *gray = o->gray;
+    if (gray == NULL) {
+        own_gray = malloc(npix);
+        gray = own_gray;
+        for (int i = 0; i < npix; i++) {
+            unsigned short rgb = o->buf[i*2] | (o->buf[i*2+1] << 8);
+            int r = (rgb >> 11) & 0x1f;
+            int g = (rgb >> 5) & 0x3f;
+            int b = rgb & 0x1f;
+            r = (r << 3) | (r >> 2);
+            g = (g << 2) | (g >> 4);
+            b = (b << 3) | (b >> 2);
+            own_gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+        }
+    }
+
+    /* One decoder for the life of the firmware: the image and pixel
+     * buffers are ~1 MB and the QR page scans every frame. */
+    static k_quirc_t *qr_ctx;
+    if (!qr_ctx) qr_ctx = k_quirc_new();
+    k_quirc_scan_t results[8];
+    int n = qr_ctx ? k_quirc_scan_ctx(qr_ctx, gray, o->w, o->h, results, 8,
+                                      find_inverted) : 0;
+    free(own_gray);
+
+    mp_obj_t items[n > 0 ? n : 0];
+    for (int i = 0; i < n; i++) {
+        qr_obj_t *qo = m_new_obj(qr_obj_t);
+        qo->base.type = &qr_type;
+        for (int c = 0; c < 4; c++)
+            qo->res.corners[c] = results[i].corners[c];
+        qo->res.data = results[i].data;
+        qo->res.valid = results[i].valid;
+        qo->grid_size = results[i].grid_size;
+        items[i] = MP_OBJ_FROM_PTR(qo);
+    }
+    return mp_obj_new_list(n, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR(image_qr_scan_obj, 1, image_qr_scan);
 
 /* How close to the brightest pixel a pixel has to be to count as
  * one of the bright ones. */
@@ -560,6 +679,12 @@ static mp_obj_t image_find_qrcodes_method(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_find_qrcodes_method_obj, 1, 2, image_find_qrcodes_method);
 
+static mp_obj_t image_qr_scan_method(size_t n_args, const mp_obj_t *args) {
+    mp_obj_t a[2] = { args[0], (n_args >= 2) ? args[1] : mp_obj_new_bool(false) };
+    return image_qr_scan(2, a);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_qr_scan_method_obj, 1, 2, image_qr_scan_method);
+
 static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_width), MP_ROM_PTR(&image_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&image_height_obj) },
@@ -568,6 +693,7 @@ static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_statistics_roi), MP_ROM_PTR(&image_get_statistics_roi_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_method_obj) },
+    { MP_ROM_QSTR(MP_QSTR_qr_scan), MP_ROM_PTR(&image_qr_scan_method_obj) },
 };
 static MP_DEFINE_CONST_DICT(image_locals_dict, image_locals_dict_table);
 
@@ -591,8 +717,11 @@ static const mp_rom_map_elem_t image_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_Image), MP_ROM_PTR(&image_type) },
     { MP_ROM_QSTR(MP_QSTR_from_nv12), MP_ROM_PTR(&image_from_nv12_obj) },
     { MP_ROM_QSTR(MP_QSTR_from_shared), MP_ROM_PTR(&image_from_shared_obj) },
+    { MP_ROM_QSTR(MP_QSTR_from_crop), MP_ROM_PTR(&image_from_crop_obj) },
     { MP_ROM_QSTR(MP_QSTR_shared_status), MP_ROM_PTR(&image_shared_status_obj) },
+    { MP_ROM_QSTR(MP_QSTR_shared_geometry), MP_ROM_PTR(&image_shared_geometry_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_obj) },
+    { MP_ROM_QSTR(MP_QSTR_qr_scan), MP_ROM_PTR(&image_qr_scan_obj) },
 };
 static MP_DEFINE_CONST_DICT(image_module_globals, image_module_globals_table);
 

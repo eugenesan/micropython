@@ -270,6 +270,59 @@ int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
   return decoded;
 }
 
+int k_quirc_scan_ctx(k_quirc_t *q, const uint8_t *grayscale_data, int width,
+                     int height, k_quirc_scan_t *results,
+                     int max_results, bool find_inverted) {
+  size_t image_size;
+  if (!q || !grayscale_data || max_results <= 0 || !results ||
+      image_allocation_size(width, height, sizeof(uint8_t), &image_size) < 0)
+    return 0;
+
+  /* Reuse the image and pixel buffers across frames: a scan allocates
+   * ~1 MB, and the QR page scans every frame. */
+  if (q->w != width || q->h != height) {
+    if (k_quirc_resize(q, width, height) < 0)
+      return 0;
+  }
+
+  uint8_t *buf = k_quirc_begin(q, NULL, NULL);
+  if (!buf)
+    return 0;
+  memcpy(buf, grayscale_data, image_size);
+
+  k_quirc_end(q, find_inverted);
+
+  int count = k_quirc_count(q);
+  int located = 0;
+
+  for (int i = 0; i < count && located < max_results; i++) {
+    k_quirc_result_t r;
+    /* k_quirc_decode fills r.corners even when the decode fails, so a
+     * located-but-unreadable code still reports its position. */
+    k_quirc_decode(q, i, &r);
+    for (int c = 0; c < 4; c++)
+      results[located].corners[c] = r.corners[c];
+    results[located].data = r.data;
+    results[located].valid = r.valid;
+    results[located].grid_size = q->grids[i].grid_size;
+    located++;
+  }
+
+  return located;
+}
+
+int k_quirc_scan_grayscale(const uint8_t *grayscale_data, int width,
+                           int height, k_quirc_scan_t *results,
+                           int max_results, bool find_inverted) {
+  k_quirc_t *q = k_quirc_new();
+  if (!q)
+    return 0;
+  int located = k_quirc_scan_ctx(q, grayscale_data, width, height,
+                                 results, max_results, find_inverted);
+  k_quirc_destroy(q);
+  return located;
+}
+
 #ifdef K_QUIRC_DEBUG
 
 static k_quirc_debug_info_t debug_info;

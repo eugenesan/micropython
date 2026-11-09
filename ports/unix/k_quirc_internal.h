@@ -114,10 +114,13 @@ static inline void *k_malloc_fast(size_t size) {
 #define QUIRC_MAX_CAPSTONES 32
 #define QUIRC_MAX_GRIDS 8
 #define QUIRC_PERSPECTIVE_PARAMS 8
+/* The version database stays complete (the generator can emit any
+ * version), but processing is capped at V20.  Krux's own UR generator
+ * tops out at V20, and the cap shrinks the per-candidate grid
+ * sampling (97x97 instead of 177x177) and the code scratch buffer.
+ * The real Sparrow UR sample is V17, so this leaves margin. */
 #define QUIRC_MAX_VERSION 40
-/* The hammerhead's full-resolution snapshot can resolve high-density
- * codes; the K210-era v21 limit was the reason they were rejected. */
-#define K_QUIRC_MAX_PROCESS_VERSION 40
+#define K_QUIRC_MAX_PROCESS_VERSION 20
 #define K_QUIRC_MAX_PROCESS_GRID_SIZE (K_QUIRC_MAX_PROCESS_VERSION * 4 + 17)
 #define QUIRC_MAX_ALIGNMENT 7
 /* Flood-fill span stack: entries are 8 bytes each (see xylf_t), so the
