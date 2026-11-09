@@ -948,6 +948,40 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
 
     /* determine if data is 16-bit (RGB565) or 32-bit */
     int is16 = (len == (size_t)w * h * 2);
+    if (is16 && scale == 1 && lcd.rotation == 1 && lcd.bpp == 32 &&
+        ox >= 0 && oy >= 0 && ox + w <= lcd.phys_width &&
+        oy + h <= lcd.phys_height &&
+        (rw <= 0 || (rx == 0 && ry == 0 && rw == w && rh == h))) {
+        /* Fast path, in the panel's scan order.  The generic loop
+         * below walks the image row by row; with the rotation that
+         * writes the panel column by column, and on the 1080x1080
+         * preview it is slower than the panel scan.  The scan then
+         * overtakes the draw and shows the previous frame in the last
+         * rows -- the tearing strip.  A row-major direct write stays
+         * ahead of the scan and removes it. */
+        int yy, xx;
+        for (yy = 0; yy < h; yy++) {
+            int sy = flip_y ? (h - 1 - yy) : yy;
+            const uint8_t *src = data + (size_t)sy * w * 2;
+            uint32_t *dst = (uint32_t *)(lcd.fb +
+                (size_t)(lcd.pan_offset + oy + yy) * lcd.stride +
+                (size_t)ox * 4);
+            for (xx = 0; xx < w; xx++) {
+                int sx = flip_x ? (w - 1 - xx) : xx;
+                unsigned short rgb = src[sx * 2] | (src[sx * 2 + 1] << 8);
+                int r = (rgb >> 11) & 0x1f;
+                int g = (rgb >> 5) & 0x3f;
+                int b = rgb & 0x1f;
+                r = (r << 3) | (r >> 2);
+                g = (g << 2) | (g >> 4);
+                b = (b << 3) | (b >> 2);
+                dst[xx] = (uint32_t)r | ((uint32_t)g << 8) |
+                          ((uint32_t)b << 16) | 0xff000000u;
+            }
+        }
+        lcd_commit();
+        return mp_const_none;
+    }
     for (i = 0; i < (size_t)w * (size_t)h; i++) {
         uint32_t pixel;
         int x = (int)i % w, y = (int)i / w;
