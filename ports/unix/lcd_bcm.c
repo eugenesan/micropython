@@ -184,14 +184,12 @@ static void lcd_do_commit_locked(void) {
 
     memset(&dc, 0, sizeof(dc));
     dc.flags = 0;
-    /* The UI commits stay non-blocking: they are batched per page and
-     * waiting on each one stalls it.  The preview commits must wait:
-     * the kernel copies the framebuffer to the scanout buffer
-     * asynchronously, and the next preview frame draws over it while
-     * that copy runs.  On the 1080x1080 frame the copy takes long
-     * enough that the panel showed a torn strip of the new frame
-     * beside the old one. */
-    dc.wait_for_finish = lcd.preview ? 1 : 0;
+    /* Non-blocking.  The preview is double buffered: the DMA scans the
+     * committed plane while the firmware draws the other one, so the
+     * commit does not have to be waited on.  Waiting for the vsync on
+     * every preview frame is also what left the display hung when the
+     * firmware was stopped in the middle of a commit. */
+    dc.wait_for_finish = 0;
     dc.var = var;
     dc.var.xoffset = 0;
     dc.var.yoffset = lcd.pan_offset;
