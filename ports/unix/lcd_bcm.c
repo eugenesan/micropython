@@ -859,7 +859,7 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
     mp_obj_t buf = mp_const_none;
     size_t i;
     int w = 0, h = 0, ox = 0, oy = 0, rx = 0, ry = 0, rw = 0, rh = 0;
-    int scale = 1, flip_x = 0, flip_y = 0;
+    int scale = 1, flip_x = 0, flip_y = 0, bg = -1;
     uint8_t *data = NULL;
     size_t len = 0;
 
@@ -909,6 +909,9 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_flip_y), MP_MAP_LOOKUP);
         if (elem != NULL)
             flip_y = mp_obj_get_int(elem->value) ? 1 : 0;
+        elem = mp_map_lookup(kwargs, MP_OBJ_NEW_QSTR(MP_QSTR_bg), MP_MAP_LOOKUP);
+        if (elem != NULL)
+            bg = mp_obj_get_int(elem->value);
     }
     if (buf == mp_const_none)
         return mp_const_none;
@@ -954,29 +957,53 @@ static mp_obj_t lcd_display(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
         (rw <= 0 || (rx == 0 && ry == 0 && rw == w && rh == h))) {
         /* Fast path, in the panel's scan order.  The generic loop
          * below walks the image row by row; with the rotation that
-         * writes the panel column by column, and on the 1080x1080
-         * preview it is slower than the panel scan.  The scan then
-         * overtakes the draw and shows the previous frame in the last
-         * rows -- the tearing strip.  A row-major direct write stays
-         * ahead of the scan and removes it. */
+         * writes the panel column by column, and on the preview it is
+         * slower than the panel scan, which then overtakes it and
+         * shows the previous frame -- the tearing strip.
+         *
+         * With a `bg` colour the whole panel is written in this one
+         * pass: the image where it lands, the background everywhere
+         * else.  Clearing the panel first and then drawing the image
+         * is two passes, and the scan shows the clear, the image and
+         * the live frame in turn -- the three strips. */
+        uint32_t bgpix = bg >= 0 ? lcd_pixel((uint16_t)bg) : 0;
         int yy, xx;
-        for (yy = 0; yy < h; yy++) {
-            int sy = flip_y ? (h - 1 - yy) : yy;
-            const uint8_t *src = data + (size_t)sy * w * 2;
+        int y_from = bg >= 0 ? 0 : oy;
+        int y_to = bg >= 0 ? lcd.phys_height : oy + h;
+        int x_from = bg >= 0 ? 0 : ox;
+        int x_to = bg >= 0 ? lcd.phys_width : ox + w;
+        for (yy = y_from; yy < y_to; yy++) {
             uint32_t *dst = (uint32_t *)(lcd.fb +
-                (size_t)(lcd.pan_offset + oy + yy) * lcd.stride +
-                (size_t)ox * 4);
-            for (xx = 0; xx < w; xx++) {
-                int sx = flip_x ? (w - 1 - xx) : xx;
-                unsigned short rgb = src[sx * 2] | (src[sx * 2 + 1] << 8);
-                int r = (rgb >> 11) & 0x1f;
-                int g = (rgb >> 5) & 0x3f;
-                int b = rgb & 0x1f;
-                r = (r << 3) | (r >> 2);
-                g = (g << 2) | (g >> 4);
-                b = (b << 3) | (b >> 2);
-                dst[xx] = (uint32_t)r | ((uint32_t)g << 8) |
-                          ((uint32_t)b << 16) | 0xff000000u;
+                (size_t)(lcd.pan_offset + yy) * lcd.stride);
+            int iy = yy - oy;
+            if (iy < 0 || iy >= h) {
+                for (xx = x_from; xx < x_to; xx++)
+                    dst[xx] = bgpix;
+                continue;
+            }
+            {
+                int sy = flip_y ? (h - 1 - iy) : iy;
+                const uint8_t *src = data + (size_t)sy * w * 2;
+                for (xx = x_from; xx < x_to; xx++) {
+                    int ix = xx - ox;
+                    int sx;
+                    unsigned short rgb;
+                    int r, g, b;
+                    if (ix < 0 || ix >= w) {
+                        dst[xx] = bgpix;
+                        continue;
+                    }
+                    sx = flip_x ? (w - 1 - ix) : ix;
+                    rgb = src[sx * 2] | (src[sx * 2 + 1] << 8);
+                    r = (rgb >> 11) & 0x1f;
+                    g = (rgb >> 5) & 0x3f;
+                    b = rgb & 0x1f;
+                    r = (r << 3) | (r >> 2);
+                    g = (g << 2) | (g >> 4);
+                    b = (b << 3) | (b >> 2);
+                    dst[xx] = (uint32_t)r | ((uint32_t)g << 8) |
+                              ((uint32_t)b << 16) | 0xff000000u;
+                }
             }
         }
         lcd_commit();
