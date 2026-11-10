@@ -172,28 +172,9 @@ static void lcd_fail(const char *what) {
  * is exactly where a page ends: the firmware draws a page and then
  * waits for a key.
  */
-/* The framebuffer holds more than one plane, and the panel scans the
- * plane it is pointed at directly: there is no copy in between.  So
- * whatever is written into the plane the panel is showing is on the
- * glass while it is being written.  The camera preview therefore goes
- * into the plane the panel is *not* showing, and the panel is switched
- * over when the frame is finished.  Without that the picture is torn
- * into strips: the top of the new frame, the middle of the old one and
- * the bottom of the new one, and the strips move with every frame.
- *
- * Only the first two planes are used: the framebuffer is 16 MB on this
- * device, which is two planes of 1080x1920, and the third one the
- * virtual size claims is not backed by memory. */
-static int lcd_back_offset(int off) {
-    if (lcd.phys_height <= 0)
-        return off;
-    return off ? 0 : lcd.phys_height;
-}
-
 static void lcd_do_commit_locked(void) {
     struct mdp_display_commit dc;
     struct fb_var_screeninfo var;
-    int yoffset;
 
     if (!lcd.ready)
         return;
@@ -213,8 +194,7 @@ static void lcd_do_commit_locked(void) {
     dc.wait_for_finish = lcd.preview ? 1 : 0;
     dc.var = var;
     dc.var.xoffset = 0;
-    yoffset = lcd.pan_offset;
-    dc.var.yoffset = yoffset;
+    dc.var.yoffset = lcd.pan_offset;
     dc.var.xres = lcd.phys_width;
     dc.var.yres = lcd.phys_height;
 
@@ -222,17 +202,11 @@ static void lcd_do_commit_locked(void) {
      * is the generic one and is what actually flips the panel on this
      * kernel.  Try both. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
-    if (!lcd.preview && yoffset != lcd.last_pan_offset) {
-        var.yoffset = yoffset;
+    if (lcd.pan_offset != lcd.last_pan_offset) {
+        var.yoffset = lcd.pan_offset;
         var.xoffset = 0;
         ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
-    }
-    lcd.last_pan_offset = yoffset;
-    if (lcd.preview) {
-        /* The panel now shows the frame that has just been drawn, so
-         * the next one goes into the other plane. */
-        lcd.visible_offset = yoffset;
-        lcd.pan_offset = lcd_back_offset(yoffset);
+        lcd.last_pan_offset = lcd.pan_offset;
     }
     lcd.dirty = 0;
 }
@@ -648,10 +622,7 @@ static mp_obj_t lcd_preview_start(void) {
 
     pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 1;
-    /* Draw into the plane the panel is not showing: the panel scans
-     * the plane it is pointed at, so a frame drawn into that plane is
-     * on the glass while it is being written. */
-    lcd.pan_offset = lcd_back_offset(lcd.visible_offset);
+    lcd.pan_offset = lcd.visible_offset;
     lcd.dirty = 0;
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
