@@ -172,6 +172,22 @@ static void lcd_fail(const char *what) {
  * is exactly where a page ends: the firmware draws a page and then
  * waits for a key.
  */
+/* The other plane of the framebuffer's virtual area, for the preview's
+ * ping-pong.  The area is triple buffered, but two planes are enough:
+ * the panel copies one while the firmware draws the other.  With a
+ * single plane there is nowhere to hide, so the current one is kept
+ * (and the preview tears, as it did before). */
+static int lcd_next_plane(int plane) {
+    int span;
+    if (lcd.nbufs < 2 || lcd.phys_height <= 0)
+        return plane;
+    span = lcd.phys_height * 2;
+    plane += lcd.phys_height;
+    if (plane >= span)
+        plane = 0;
+    return plane;
+}
+
 static void lcd_do_commit_locked(void) {
     struct mdp_display_commit dc;
     struct fb_var_screeninfo var;
@@ -200,15 +216,29 @@ static void lcd_do_commit_locked(void) {
 
     /* MSMFB_DISPLAY_COMMIT is the MSM-specific commit; FBIOPAN_DISPLAY
      * is the generic one and is what actually flips the panel on this
-     * kernel.  Try both. */
+     * kernel.  Try both, except during the preview: there the MSM
+     * commit has already moved the panel, and a second pan would only
+     * spend another two vertical blanks. */
     ioctl(lcd.fd, MSMFB_DISPLAY_COMMIT, &dc);
-    if (lcd.pan_offset != lcd.last_pan_offset) {
+    if (!lcd.preview && lcd.pan_offset != lcd.last_pan_offset) {
         var.yoffset = lcd.pan_offset;
         var.xoffset = 0;
         ioctl(lcd.fd, FBIOPAN_DISPLAY, &var);
         lcd.last_pan_offset = lcd.pan_offset;
     }
     lcd.dirty = 0;
+    if (lcd.preview) {
+        /* The commit re-pointed the panel at pan_offset.  The driver
+         * copies that plane asynchronously, so draw the next frame in
+         * the other one: each update waits for the previous copy to
+         * finish before re-pointing, so the plane we draw into is the
+         * one nobody is reading.  Without this the panel copied the
+         * same plane the firmware was writing, and a strip of the
+         * newer frame appeared where the copy had got to. */
+        lcd.visible_offset = lcd.pan_offset;
+        lcd.last_pan_offset = lcd.pan_offset;
+        lcd.pan_offset = lcd_next_plane(lcd.pan_offset);
+    }
 }
 
 static void lcd_do_commit(void) {
@@ -540,6 +570,15 @@ static mp_obj_t lcd_init(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
     lcd.mirror = 0;
     lcd.bgr = 0;
     lcd.nbufs = (var.yres > 0) ? (int)(var.yres_virtual / var.yres) : 1;
+    /* yres_virtual can advertise more planes than the framebuffer's
+     * memory actually holds (this panel reports three, the allocation
+     * is two).  Never draw past the end of the mapping. */
+    if (lcd.stride > 0 && lcd.phys_height > 0 && lcd.fb_size > 0) {
+        size_t per = (size_t)lcd.stride * (size_t)lcd.phys_height;
+        size_t fit = per ? lcd.fb_size / per : 1;
+        if (fit < (size_t)lcd.nbufs)
+            lcd.nbufs = (int)fit;
+    }
     if (lcd.nbufs < 1)
         lcd.nbufs = 1;
     lcd.pan_offset = 0;
@@ -622,7 +661,25 @@ static mp_obj_t lcd_preview_start(void) {
 
     pthread_mutex_lock(&lcd.commit_mutex);
     lcd.preview = 1;
-    lcd.pan_offset = lcd.visible_offset;
+    /* Find the plane the panel is on, then draw into the other one.
+     * Seed it from the shown plane so the margins (and any background
+     * the page cleared) are already right; only the picture changes
+     * from frame to frame. */
+    {
+        struct fb_var_screeninfo pan;
+        if (ioctl(lcd.fd, FBIOGET_VSCREENINFO, &pan) == 0)
+            lcd.visible_offset = pan.yoffset;
+    }
+    if (lcd.visible_offset < 0 ||
+        lcd.visible_offset >= lcd.phys_height * lcd.nbufs)
+        lcd.visible_offset = 0;
+    lcd.pan_offset = lcd_next_plane(lcd.visible_offset);
+    if (lcd.pan_offset != lcd.visible_offset && lcd.fb &&
+        lcd.stride > 0 && lcd.phys_height > 0)
+        memcpy(lcd.fb + (size_t)lcd.pan_offset * lcd.stride,
+               lcd.fb + (size_t)lcd.visible_offset * lcd.stride,
+               (size_t)lcd.phys_height * lcd.stride);
+    lcd.last_pan_offset = lcd.visible_offset;
     lcd.dirty = 0;
     pthread_mutex_unlock(&lcd.commit_mutex);
     return mp_const_none;
