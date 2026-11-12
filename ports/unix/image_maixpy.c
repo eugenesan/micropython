@@ -42,6 +42,17 @@ typedef struct {
      * the code happens to be. */
     int l_bright_mean;
     int l_bright_count;
+    /* The percentile levels of the region (the luma histogram's P50,
+     * P90, P95 and P99), and how many pixels were measured.
+     *
+     * The auto-exposure works from these, not from the bright-pixel
+     * mean: that metric has an absolute margin (BRIGHT_MARGIN), so in
+     * a dim scene it degenerates to the plain mean, and a few hot
+     * pixels move it.  A percentile says "95% of the region is below
+     * this level", which is stable in both a dim room and a clipped
+     * bright screen, and it makes the clipped fraction meaningful. */
+    int l_p50, l_p90, l_p95, l_p99;
+    int l_count;
 } stats_obj_t;
 
 /* forward declarations */
@@ -530,6 +541,31 @@ static inline int image_luma(const image_obj_t *o, int i, const uint8_t *gray) {
     return (r * 299 + g * 587 + b * 114) / 1000;
 }
 
+/* Fill in the percentile levels from a 256-bin histogram of the
+ * region.  One pass over the pixels and one over the bins. */
+static void stats_percentiles(stats_obj_t *s, const image_obj_t *o,
+                              int x0, int y0, int x1, int y1, long n)
+{
+    static uint32_t hist[256];
+    long acc = 0;
+    int l;
+    int have50 = 0, have90 = 0, have95 = 0, have99 = 0;
+
+    memset(hist, 0, sizeof(hist));
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++)
+            hist[image_luma(o, y * o->w + x, o->gray)]++;
+    s->l_p50 = s->l_p90 = s->l_p95 = s->l_p99 = 0;
+    s->l_count = (int)n;
+    for (l = 0; l < 256; l++) {
+        acc += hist[l];
+        if (!have50 && acc * 100 >= n * 50) { s->l_p50 = l; have50 = 1; }
+        if (!have90 && acc * 100 >= n * 90) { s->l_p90 = l; have90 = 1; }
+        if (!have95 && acc * 100 >= n * 95) { s->l_p95 = l; have95 = 1; }
+        if (!have99 && acc * 100 >= n * 99) { s->l_p99 = l; have99 = 1; }
+    }
+}
+
 static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     image_obj_t *o = MP_OBJ_TO_PTR(self_in);
     stats_obj_t *s = m_new_obj(stats_obj_t);
@@ -575,6 +611,7 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
         s->l_bright_mean = bcount ? (int)(bsum / bcount) : 0;
         s->l_bright_count = bcount;
     }
+    stats_percentiles(s, o, 0, 0, o->w, o->h, n);
     s->a_mean = 128; s->a_stdev = 10;
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
@@ -602,6 +639,8 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
     if (n <= 0) {
         s->l_mean = s->l_stdev = s->l_min = s->l_max = 0;
         s->clipped_low = s->clipped_high = 0;
+        s->l_p50 = s->l_p90 = s->l_p95 = s->l_p99 = 0;
+        s->l_count = 0;
         return MP_OBJ_FROM_PTR(s);
     }
 
@@ -649,6 +688,7 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
         s->l_bright_mean = bcount ? (int)(bsum / bcount) : 0;
         s->l_bright_count = bcount;
     }
+    stats_percentiles(s, o, x0, y0, x1, y1, n);
     return MP_OBJ_FROM_PTR(s);
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_get_statistics_roi_obj, 5, 5,
@@ -667,6 +707,11 @@ static mp_obj_t stats_l_min(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(s
 static mp_obj_t stats_l_max(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_max); }
 static mp_obj_t stats_clipped_low(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->clipped_low); }
 static mp_obj_t stats_clipped_high(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->clipped_high); }
+static mp_obj_t stats_l_p50(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_p50); }
+static mp_obj_t stats_l_p90(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_p90); }
+static mp_obj_t stats_l_p95(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_p95); }
+static mp_obj_t stats_l_p99(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_p99); }
+static mp_obj_t stats_l_count(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_count); }
 
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_mean_obj, stats_l_mean);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_bright_mean_obj, stats_l_bright_mean);
@@ -681,6 +726,11 @@ static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_min_obj, stats_l_min);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_max_obj, stats_l_max);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_clipped_low_obj, stats_clipped_low);
 static MP_DEFINE_CONST_FUN_OBJ_1(stats_clipped_high_obj, stats_clipped_high);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_p50_obj, stats_l_p50);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_p90_obj, stats_l_p90);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_p95_obj, stats_l_p95);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_p99_obj, stats_l_p99);
+static MP_DEFINE_CONST_FUN_OBJ_1(stats_l_count_obj, stats_l_count);
 
 static const mp_rom_map_elem_t stats_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_l_mean), MP_ROM_PTR(&stats_l_mean_obj) },
@@ -691,6 +741,11 @@ static const mp_rom_map_elem_t stats_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_l_max), MP_ROM_PTR(&stats_l_max_obj) },
     { MP_ROM_QSTR(MP_QSTR_clipped_low), MP_ROM_PTR(&stats_clipped_low_obj) },
     { MP_ROM_QSTR(MP_QSTR_clipped_high), MP_ROM_PTR(&stats_clipped_high_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_p50), MP_ROM_PTR(&stats_l_p50_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_p90), MP_ROM_PTR(&stats_l_p90_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_p95), MP_ROM_PTR(&stats_l_p95_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_p99), MP_ROM_PTR(&stats_l_p99_obj) },
+    { MP_ROM_QSTR(MP_QSTR_l_count), MP_ROM_PTR(&stats_l_count_obj) },
     { MP_ROM_QSTR(MP_QSTR_a_mean), MP_ROM_PTR(&stats_a_mean_obj) },
     { MP_ROM_QSTR(MP_QSTR_a_stdev), MP_ROM_PTR(&stats_a_stdev_obj) },
     { MP_ROM_QSTR(MP_QSTR_b_mean), MP_ROM_PTR(&stats_b_mean_obj) },
