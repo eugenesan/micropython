@@ -1092,6 +1092,7 @@ static mp_obj_t lcd_get_pixel(size_t n_args, const mp_obj_t *args) {
     }
 }
 
+#ifndef KRUX_RELEASE
 /* save_ppm(path) -- the framebuffer as a picture, so that what was
  * drawn can be looked at. */
 static mp_obj_t lcd_save_ppm(size_t n_args, const mp_obj_t *args) {
@@ -1144,7 +1145,7 @@ static mp_obj_t lcd_save_ppm(size_t n_args, const mp_obj_t *args) {
     fclose(f);
     return mp_const_none;
 }
-
+#endif
 
 /* draw_qr_code_binary(x, y, code, width, dark, light, bg) -- the QR
  * code, the way MaixPy draws it: the code is the packed bitmap that
@@ -1256,7 +1257,9 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_string_has_wide_glyph_obj, 1, lcd_string_
 static MP_DEFINE_CONST_FUN_OBJ_KW(lcd_display_obj, 1, lcd_display);
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lcd_draw_qr_code_binary_obj, 4, 7, lcd_draw_qr_code_binary);
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_get_pixel_obj, 2, lcd_get_pixel);
+#ifndef KRUX_RELEASE
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_save_ppm_obj, 1, lcd_save_ppm);
+#endif
 static MP_DEFINE_CONST_FUN_OBJ_VAR(lcd_flush_obj, 0, lcd_flush);
 static MP_DEFINE_CONST_FUN_OBJ_0(lcd_preview_start_obj, lcd_preview_start);
 static MP_DEFINE_CONST_FUN_OBJ_0(lcd_preview_flip_obj, lcd_preview_flip);
@@ -1280,7 +1283,9 @@ static const mp_rom_map_elem_t lcd_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_display), MP_ROM_PTR(&lcd_display_obj) },
     { MP_ROM_QSTR(MP_QSTR_draw_qr_code_binary), MP_ROM_PTR(&lcd_draw_qr_code_binary_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_pixel), MP_ROM_PTR(&lcd_get_pixel_obj) },
+#ifndef KRUX_RELEASE
     { MP_ROM_QSTR(MP_QSTR_save_ppm), MP_ROM_PTR(&lcd_save_ppm_obj) },
+#endif
     { MP_ROM_QSTR(MP_QSTR_flush), MP_ROM_PTR(&lcd_flush_obj) },
     { MP_ROM_QSTR(MP_QSTR_preview_start), MP_ROM_PTR(&lcd_preview_start_obj) },
     { MP_ROM_QSTR(MP_QSTR_preview_flip), MP_ROM_PTR(&lcd_preview_flip_obj) },
