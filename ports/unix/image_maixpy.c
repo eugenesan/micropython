@@ -59,6 +59,7 @@ typedef struct {
 const mp_obj_type_t stats_type;
 const mp_obj_type_t image_type;
 static mp_obj_t image_get_statistics(mp_obj_t self_in);
+static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args);
 
 static mp_obj_t image_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     image_obj_t *o = m_new_obj(image_obj_t);
@@ -616,8 +617,6 @@ static mp_obj_t image_get_statistics(mp_obj_t self_in) {
     s->b_mean = 128; s->b_stdev = 10;
     return MP_OBJ_FROM_PTR(s);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(image_get_statistics_obj, image_get_statistics);
-
 static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
     (void)n_args;
     image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
@@ -694,6 +693,24 @@ static mp_obj_t image_get_statistics_roi(size_t n_args, const mp_obj_t *args) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(image_get_statistics_roi_obj, 5, 5,
                                            image_get_statistics_roi);
 
+/* The MaixPy pages call get_statistics(roi=(x,y,w,h)) with a keyword. */
+static mp_obj_t image_get_statistics_kw(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    (void)n_args;
+    mp_map_elem_t *e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_roi), MP_MAP_LOOKUP);
+    if (e != NULL) {
+        size_t rn = 0; mp_obj_t *r = NULL;
+        if (mp_obj_is_type(e->value, &mp_type_tuple) || mp_obj_is_type(e->value, &mp_type_list)) {
+            mp_obj_get_array(e->value, &rn, &r);
+        }
+        if (rn >= 4) {
+            mp_obj_t a[5] = { args[0], r[0], r[1], r[2], r[3] };
+            return image_get_statistics_roi(5, a);
+        }
+    }
+    return image_get_statistics(args[0]);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(image_get_statistics_kw_obj, 1, image_get_statistics_kw);
+
 static mp_obj_t stats_l_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_mean); }
 static mp_obj_t stats_l_bright_mean(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_mean); }
 static mp_obj_t stats_l_bright_count(mp_obj_t self_in) { stats_obj_t *s = MP_OBJ_TO_PTR(self_in); return mp_obj_new_int(s->l_bright_count); }
@@ -754,6 +771,306 @@ static const mp_rom_map_elem_t stats_locals_dict_table[] = {
 };
 static MP_DEFINE_CONST_DICT(stats_locals_dict, stats_locals_dict_table);
 
+/* ------------------------------------------------------------------ *
+ * The MaixPy image helpers the Tiny Seed (Binary Grid) page needs.
+ *
+ * find_blobs, get_histogram().get_threshold().value() and draw_rectangle
+ * are standard MaixPy methods.  Only QR decoding was ported to this
+ * image object, so the page raised AttributeError on its first frame.
+ * These are small, self-contained implementations over the same luma
+ * plane the statistics and decoder already use.
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+    mp_obj_base_t base;
+    int x, y, w, h;
+    int pixels;
+} blob_obj_t;
+
+static mp_obj_t blob_rect(mp_obj_t self_in) {
+    blob_obj_t *b = MP_OBJ_TO_PTR(self_in);
+    mp_obj_t items[4] = {
+        mp_obj_new_int(b->x), mp_obj_new_int(b->y),
+        mp_obj_new_int(b->w), mp_obj_new_int(b->h),
+    };
+    return mp_obj_new_tuple(4, items);
+}
+static mp_obj_t blob_x(mp_obj_t self_in) { return mp_obj_new_int(((blob_obj_t *)MP_OBJ_TO_PTR(self_in))->x); }
+static mp_obj_t blob_y(mp_obj_t self_in) { return mp_obj_new_int(((blob_obj_t *)MP_OBJ_TO_PTR(self_in))->y); }
+static mp_obj_t blob_w(mp_obj_t self_in) { return mp_obj_new_int(((blob_obj_t *)MP_OBJ_TO_PTR(self_in))->w); }
+static mp_obj_t blob_h(mp_obj_t self_in) { return mp_obj_new_int(((blob_obj_t *)MP_OBJ_TO_PTR(self_in))->h); }
+static mp_obj_t blob_pixels(mp_obj_t self_in) { return mp_obj_new_int(((blob_obj_t *)MP_OBJ_TO_PTR(self_in))->pixels); }
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_rect_obj, blob_rect);
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_x_obj, blob_x);
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_y_obj, blob_y);
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_w_obj, blob_w);
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_h_obj, blob_h);
+static MP_DEFINE_CONST_FUN_OBJ_1(blob_pixels_obj, blob_pixels);
+static const mp_rom_map_elem_t blob_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&blob_rect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&blob_x_obj) },
+    { MP_ROM_QSTR(MP_QSTR_y), MP_ROM_PTR(&blob_y_obj) },
+    { MP_ROM_QSTR(MP_QSTR_w), MP_ROM_PTR(&blob_w_obj) },
+    { MP_ROM_QSTR(MP_QSTR_h), MP_ROM_PTR(&blob_h_obj) },
+    { MP_ROM_QSTR(MP_QSTR_pixels), MP_ROM_PTR(&blob_pixels_obj) },
+};
+static MP_DEFINE_CONST_DICT(blob_locals_dict, blob_locals_dict_table);
+MP_DEFINE_CONST_OBJ_TYPE(blob_type, MP_QSTR_blob, 0, locals_dict, &blob_locals_dict);
+
+/* thresholds is a list of (lo, hi) tuples, as in MaixPy. */
+static bool image_pixel_in_thresholds(int val, mp_obj_t thresholds, bool invert) {
+    size_t n = 0;
+    mp_obj_t *items = NULL;
+    if (thresholds != MP_OBJ_NULL) {
+        mp_obj_get_array(thresholds, &n, &items);
+    }
+    bool inside = false;
+    for (size_t i = 0; i < n; i++) {
+        size_t tn = 0;
+        mp_obj_t *t = NULL;
+        mp_obj_get_array(items[i], &tn, &t);
+        if (tn >= 2) {
+            int lo = mp_obj_get_int(t[0]);
+            int hi = mp_obj_get_int(t[1]);
+            if (val >= lo && val <= hi) { inside = true; break; }
+        }
+    }
+    return invert ? !inside : inside;
+}
+
+static mp_obj_t image_find_blobs(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    mp_obj_t thresholds = (n_args >= 2) ? args[1] : MP_OBJ_NULL;
+    int xstride = 1, ystride = 1, area_thresh = 10, invert = 0;
+    int rx = 0, ry = 0, rw = o->w, rh = o->h;
+    mp_map_elem_t *e;
+
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_x_stride), MP_MAP_LOOKUP);
+    if (e != NULL) xstride = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_y_stride), MP_MAP_LOOKUP);
+    if (e != NULL) ystride = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_area_threshold), MP_MAP_LOOKUP);
+    if (e != NULL) area_thresh = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_pixels_threshold), MP_MAP_LOOKUP);
+    if (e != NULL && mp_obj_get_int(e->value) > area_thresh) area_thresh = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_invert), MP_MAP_LOOKUP);
+    if (e != NULL) invert = mp_obj_is_true(e->value) ? 1 : 0;
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_roi), MP_MAP_LOOKUP);
+    if (e != NULL) {
+        size_t rn = 0; mp_obj_t *r = NULL;
+        mp_obj_get_array(e->value, &rn, &r);
+        if (rn >= 4) { rx = mp_obj_get_int(r[0]); ry = mp_obj_get_int(r[1]); rw = mp_obj_get_int(r[2]); rh = mp_obj_get_int(r[3]); }
+    }
+    if (xstride < 1) xstride = 1;
+    if (ystride < 1) ystride = 1;
+    if (rx < 0) rx = 0;
+    if (ry < 0) ry = 0;
+    if (rx + rw > o->w) rw = o->w - rx;
+    if (ry + rh > o->h) rh = o->h - ry;
+
+    /* The luma plane is the sensor's own Y when this is a camera frame;
+     * fall back to the RGB565 buffer when it is not. */
+    const uint8_t *gray = o->gray;
+    uint8_t *own = NULL;
+    if (gray == NULL) {
+        own = m_new(uint8_t, o->w * o->h);
+        for (int i = 0; i < o->w * o->h; i++) {
+            unsigned short rgb = o->buf[i * 2] | (o->buf[i * 2 + 1] << 8);
+            int r = (rgb >> 11) & 0x1f, g = (rgb >> 5) & 0x3f, b = rgb & 0x1f;
+            own[i] = (uint8_t)((r * 77 + g * 150 + b * 29) >> 8);
+        }
+        gray = own;
+    }
+
+    int gw = (rw + xstride - 1) / xstride;
+    int gh = (rh + ystride - 1) / ystride;
+    if (gw <= 0 || gh <= 0) {
+        if (own != NULL) m_del(uint8_t, own, o->w * o->h);
+        return mp_obj_new_list(0, NULL);
+    }
+    uint8_t *visited = m_new0(uint8_t, gw * gh);
+    uint32_t *stack = m_new(uint32_t, gw * gh);
+    mp_obj_list_t *result = MP_OBJ_TO_PTR(mp_obj_new_list(0, NULL));
+
+    for (int cy = 0; cy < gh; cy++) {
+        for (int cx = 0; cx < gw; cx++) {
+            int start = cy * gw + cx;
+            if (visited[start]) continue;
+            int px = rx + cx * xstride, py = ry + cy * ystride;
+            if (!image_pixel_in_thresholds(gray[py * o->w + px], thresholds, invert)) continue;
+
+            int sp = 0;
+            stack[sp++] = (uint32_t)start;
+            visited[start] = 1;
+            int mnx = cx, mxx = cx, mny = cy, mxy = cy, count = 0;
+            while (sp > 0) {
+                int cell = (int)stack[--sp];
+                int x = cell % gw, y = cell / gw;
+                count++;
+                if (x < mnx) mnx = x;
+                if (x > mxx) mxx = x;
+                if (y < mny) mny = y;
+                if (y > mxy) mxy = y;
+                int nb[4] = {x - 1, x + 1, x, x};
+                int ny[4] = {y, y, y - 1, y + 1};
+                for (int k = 0; k < 4; k++) {
+                    if (nb[k] < 0 || nb[k] >= gw || ny[k] < 0 || ny[k] >= gh) continue;
+                    int ni = ny[k] * gw + nb[k];
+                    if (visited[ni]) continue;
+                    int nx = rx + nb[k] * xstride, ny2 = ry + ny[k] * ystride;
+                    if (!image_pixel_in_thresholds(gray[ny2 * o->w + nx], thresholds, invert)) continue;
+                    visited[ni] = 1;
+                    stack[sp++] = (uint32_t)ni;
+                }
+            }
+            int area = count * xstride * ystride;
+            if (area >= area_thresh) {
+                blob_obj_t *b = m_new_obj(blob_obj_t);
+                b->base.type = &blob_type;
+                b->x = rx + mnx * xstride;
+                b->y = ry + mny * ystride;
+                b->w = (mxx - mnx + 1) * xstride;
+                b->h = (mxy - mny + 1) * ystride;
+                b->pixels = area;
+                mp_obj_list_append(MP_OBJ_FROM_PTR(result), MP_OBJ_FROM_PTR(b));
+            }
+        }
+    }
+    m_del(uint8_t, visited, gw * gh);
+    m_del(uint32_t, stack, gw * gh);
+    if (own != NULL) m_del(uint8_t, own, o->w * o->h);
+    return MP_OBJ_FROM_PTR(result);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(image_find_blobs_obj, 1, image_find_blobs);
+
+/* get_histogram().get_threshold().value() -- Otsu's method over the luma. */
+typedef struct { mp_obj_base_t base; int value; } threshold_obj_t;
+typedef struct { mp_obj_base_t base; int otsu; } hist_obj_t;
+
+static mp_obj_t threshold_value(mp_obj_t self_in) { return mp_obj_new_int(((threshold_obj_t *)MP_OBJ_TO_PTR(self_in))->value); }
+static MP_DEFINE_CONST_FUN_OBJ_1(threshold_value_obj, threshold_value);
+static const mp_rom_map_elem_t threshold_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_value), MP_ROM_PTR(&threshold_value_obj) },
+};
+static MP_DEFINE_CONST_DICT(threshold_locals_dict, threshold_locals_dict_table);
+MP_DEFINE_CONST_OBJ_TYPE(threshold_type, MP_QSTR_threshold, 0, locals_dict, &threshold_locals_dict);
+
+static mp_obj_t hist_get_threshold(mp_obj_t self_in) {
+    hist_obj_t *h = MP_OBJ_TO_PTR(self_in);
+    threshold_obj_t *t = m_new_obj(threshold_obj_t);
+    t->base.type = &threshold_type;
+    t->value = h->otsu;
+    return MP_OBJ_FROM_PTR(t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(hist_get_threshold_obj, hist_get_threshold);
+static const mp_rom_map_elem_t hist_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_get_threshold), MP_ROM_PTR(&hist_get_threshold_obj) },
+};
+static MP_DEFINE_CONST_DICT(hist_locals_dict, hist_locals_dict_table);
+MP_DEFINE_CONST_OBJ_TYPE(hist_type, MP_QSTR_histogram, 0, locals_dict, &hist_locals_dict);
+
+static mp_obj_t image_get_histogram(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    int rx = 0, ry = 0, rw = o->w, rh = o->h;
+    mp_map_elem_t *e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_roi), MP_MAP_LOOKUP);
+    if (e != NULL) {
+        size_t rn = 0; mp_obj_t *r = NULL;
+        mp_obj_get_array(e->value, &rn, &r);
+        if (rn >= 4) { rx = mp_obj_get_int(r[0]); ry = mp_obj_get_int(r[1]); rw = mp_obj_get_int(r[2]); rh = mp_obj_get_int(r[3]); }
+    }
+    if (rx < 0) rx = 0;
+    if (ry < 0) ry = 0;
+    if (rx + rw > o->w) rw = o->w - rx;
+    if (ry + rh > o->h) rh = o->h - ry;
+
+    uint32_t hist[256] = {0};
+    long total = 0;
+    const uint8_t *gray = o->gray;
+    if (gray != NULL) {
+        for (int y = ry; y < ry + rh; y++)
+            for (int x = rx; x < rx + rw; x++) { hist[gray[y * o->w + x]]++; total++; }
+    } else {
+        for (int y = ry; y < ry + rh; y++)
+            for (int x = rx; x < rx + rw; x++) {
+                unsigned short rgb = o->buf[(y * o->w + x) * 2] | (o->buf[(y * o->w + x) * 2 + 1] << 8);
+                int r = (rgb >> 11) & 0x1f, g = (rgb >> 5) & 0x3f, b = rgb & 0x1f;
+                hist[(uint8_t)((r * 77 + g * 150 + b * 29) >> 8)]++; total++;
+            }
+    }
+    /* Otsu: maximise the between-class variance. */
+    int otsu = 128;
+    if (total > 0) {
+        double sum = 0;
+        for (int i = 0; i < 256; i++) sum += (double)i * hist[i];
+        double sumB = 0, maxVar = -1;
+        long wB = 0;
+        for (int t = 0; t < 256; t++) {
+            wB += hist[t];
+            if (wB == 0) continue;
+            long wF = total - wB;
+            if (wF == 0) break;
+            sumB += (double)t * hist[t];
+            double mB = sumB / wB, mF = (sum - sumB) / wF;
+            double between = (double)wB * wF * (mB - mF) * (mB - mF);
+            if (between > maxVar) { maxVar = between; otsu = t; }
+        }
+    }
+    hist_obj_t *h = m_new_obj(hist_obj_t);
+    h->base.type = &hist_type;
+    h->otsu = otsu;
+    return MP_OBJ_FROM_PTR(h);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(image_get_histogram_obj, 1, image_get_histogram);
+
+/* draw_rectangle((x,y,w,h), color, thickness=N, fill=N) -- draws into the
+ * RGB565 buffer so lcd.display(img) shows the overlay. */
+static mp_obj_t image_draw_rectangle(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    image_obj_t *o = MP_OBJ_TO_PTR(args[0]);
+    int x = 0, y = 0, w = 0, h = 0, color = 0xFFFF, thickness = 1, fill = 0;
+    size_t ai = 1;
+    mp_obj_t first = (n_args > 1) ? args[1] : MP_OBJ_NULL;
+    size_t rn = 0; mp_obj_t *r = NULL;
+    if (first != MP_OBJ_NULL && (mp_obj_is_type(first, &mp_type_tuple) || mp_obj_is_type(first, &mp_type_list))) {
+        mp_obj_get_array(first, &rn, &r);
+    }
+    if (rn >= 4) {
+        x = mp_obj_get_int(r[0]); y = mp_obj_get_int(r[1]);
+        w = mp_obj_get_int(r[2]); h = mp_obj_get_int(r[3]);
+        ai = 2;
+    } else if (n_args >= 5) {
+        x = mp_obj_get_int(args[1]); y = mp_obj_get_int(args[2]);
+        w = mp_obj_get_int(args[3]); h = mp_obj_get_int(args[4]);
+        ai = 5;
+    }
+    if (n_args > ai) color = mp_obj_get_int(args[ai]);
+    mp_map_elem_t *e;
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_color), MP_MAP_LOOKUP);
+    if (e != NULL) color = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_thickness), MP_MAP_LOOKUP);
+    if (e != NULL) thickness = mp_obj_get_int(e->value);
+    e = mp_map_lookup(kw_args, MP_OBJ_NEW_QSTR(MP_QSTR_fill), MP_MAP_LOOKUP);
+    if (e != NULL) fill = mp_obj_is_true(e->value) ? 1 : 0;
+    if (thickness < 1) thickness = 1;
+
+    for (int yy = y; yy < y + h && yy < o->h; yy++) {
+        for (int xx = x; xx < x + w && xx < o->w; xx++) {
+            bool on = fill;
+            if (!on) {
+                for (int t = 0; t < thickness; t++) {
+                    if (yy == y + t || yy == y + h - 1 - t || xx == x + t || xx == x + w - 1 - t) { on = true; break; }
+                }
+            }
+            if (on) {
+                int idx = (yy * o->w + xx) * 2;
+                o->buf[idx] = color & 0xff;
+                o->buf[idx + 1] = (color >> 8) & 0xff;
+            }
+        }
+    }
+    return MP_OBJ_FROM_PTR(o);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(image_draw_rectangle_obj, 1, image_draw_rectangle);
+
 static mp_obj_t image_find_qrcodes_method(size_t n_args, const mp_obj_t *args) {
     mp_obj_t a[2] = { args[0], (n_args >= 2) ? args[1] : mp_obj_new_bool(false) };
     return image_find_qrcodes(2, a);
@@ -771,8 +1088,11 @@ static const mp_rom_map_elem_t image_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&image_height_obj) },
     { MP_ROM_QSTR(MP_QSTR_to_bytes), MP_ROM_PTR(&image_to_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&image_clear_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_statistics), MP_ROM_PTR(&image_get_statistics_kw_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_statistics_roi), MP_ROM_PTR(&image_get_statistics_roi_obj) },
+    { MP_ROM_QSTR(MP_QSTR_find_blobs), MP_ROM_PTR(&image_find_blobs_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_histogram), MP_ROM_PTR(&image_get_histogram_obj) },
+    { MP_ROM_QSTR(MP_QSTR_draw_rectangle), MP_ROM_PTR(&image_draw_rectangle_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_qrcodes), MP_ROM_PTR(&image_find_qrcodes_method_obj) },
     { MP_ROM_QSTR(MP_QSTR_qr_scan), MP_ROM_PTR(&image_qr_scan_method_obj) },
 };
